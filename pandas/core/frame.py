@@ -199,7 +199,9 @@ class DataFrame(NDFrame):
     def _constructor(self):
         return DataFrame
 
-    _constructor_sliced = Series
+    @property
+    def _constructor_sliced(self):
+        return Series
 
     @property
     def _constructor_expanddim(self):
@@ -1904,7 +1906,7 @@ class DataFrame(NDFrame):
                     # if we are a copy, mark as such
                     copy = (isinstance(new_values, np.ndarray) and
                             new_values.base is None)
-                    result = Series(new_values, index=self.columns,
+                    result = self._constructor_sliced(new_values, index=self.columns,
                                     name=self.index[i], dtype=new_values.dtype)
                 result._set_is_copy(self, copy=copy)
                 return result
