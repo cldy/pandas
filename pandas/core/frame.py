@@ -199,9 +199,7 @@ class DataFrame(NDFrame):
     def _constructor(self):
         return DataFrame
 
-    @property
-    def _constructor_sliced(self):
-        return Series
+    _constructor_sliced = Series
 
     @property
     def _constructor_expanddim(self):
