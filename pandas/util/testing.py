@@ -2250,9 +2250,26 @@ def test_parallel(num_threads=2, kwargs_list=None):
     return wrapper
 
 
+class SubclassedSeries(Series):
+    @property
+    def _constructor(self):
+        return SubclassedSeries
+
+    @property
+    def _constructor_expanddim(self):
+        return SubclassedDataFrame
+
+    @property
+    def _constructor_sliced(self):
+        return SubclassedSeries
+
 class SubclassedDataFrame(DataFrame):
     _metadata = ['testattr']
 
     @property
     def _constructor(self):
         return SubclassedDataFrame
+
+    @property
+    def _constructor_sliced(self):
+        return SubclassedSeries

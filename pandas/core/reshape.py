@@ -61,7 +61,7 @@ class _Unstacker(object):
     """
 
     def __init__(self, values, index, level=-1, value_columns=None,
-                 fill_value=None):
+                 fill_value=None, frame_constr=DataFrame):
 
         self.is_categorical = None
         if values.ndim == 1:
@@ -72,6 +72,7 @@ class _Unstacker(object):
         self.values = values
         self.value_columns = value_columns
         self.fill_value = fill_value
+        self.frame_constr = frame_constr
 
         if value_columns is None and values.shape[1] != 1:  # pragma: no cover
             raise ValueError('must pass column labels for multi-column data')
@@ -164,7 +165,7 @@ class _Unstacker(object):
                 values[:, i], categories=self.is_categorical.categories,
                 ordered=True) for i in range(values.shape[-1])]
 
-        return DataFrame(values, index=index, columns=columns)
+        return self.frame_constr(values, index=index, columns=columns)
 
     def get_new_values(self):
         values = self.values
@@ -325,8 +326,9 @@ def pivot(self, index=None, columns=None, values=None):
             index = self.index
         else:
             index = self[index]
-        indexed = Series(self[values].values,
-                         index=MultiIndex.from_arrays([index, self[columns]]))
+        indexed = self._constructor_sliced(
+            self[values].values,
+            index=MultiIndex.from_arrays([index, self[columns]]))
         return indexed.unstack(columns)
 
 
@@ -402,7 +404,8 @@ def unstack(obj, level, fill_value=None):
             return obj.T.stack(dropna=False)
     else:
         unstacker = _Unstacker(obj.values, obj.index, level=level,
-                               fill_value=fill_value)
+                               fill_value=fill_value,
+                               frame_constr=obj._constructor_expanddim)
         return unstacker.get_result()
 
 
@@ -434,8 +437,8 @@ def _unstack_frame(obj, level, fill_value=None):
             newb = make_block(new_values.T, placement=new_placement)
             new_blocks.append(newb)
 
-        result = DataFrame(BlockManager(new_blocks, new_axes))
-        mask_frame = DataFrame(BlockManager(mask_blocks, new_axes))
+        result = obj._constructor(BlockManager(new_blocks, new_axes))
+        mask_frame = obj._constructor(BlockManager(mask_blocks, new_axes))
         return result.ix[:, mask_frame.sum(0) > 0]
     else:
         unstacker = _Unstacker(obj.values, obj.index, level=level,
@@ -504,7 +507,7 @@ def stack(frame, level=-1, dropna=True):
         mask = notnull(new_values)
         new_values = new_values[mask]
         new_index = new_index[mask]
-    return Series(new_values, index=new_index)
+    return frame._constructor_sliced(new_values, index=new_index)
 
 
 def stack_multiple(frame, level, dropna=True):

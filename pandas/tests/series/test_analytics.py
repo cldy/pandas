@@ -1915,6 +1915,10 @@ class TestSeriesAnalytics(TestData, tm.TestCase):
         exp = Series([np.nan, 'B', 'C', 'D'])
         self.assert_series_equal(a.map(c), exp)
 
+    def test_map_subclassing(self):
+        s1 = tm.SubclassedSeries(np.random.randn(6), index=list('abcdef'))
+        tm.assertIsInstance(s1.map(lambda x: x), tm.SubclassedSeries)
+
     def test_map_compat(self):
         # related GH 8024
         s = Series([True, True, False], index=[1, 2, 3])
@@ -1995,6 +1999,10 @@ class TestSeriesAnalytics(TestData, tm.TestCase):
         s = Series(index=[1, 2, 3])
         rs = s.apply(lambda x: x)
         tm.assert_series_equal(s, rs)
+
+    def test_apply_subclassing(self):
+        s1 = tm.SubclassedSeries(np.random.randn(6), index=list('abcdef'))
+        tm.assertIsInstance(s1.apply(lambda x: x), tm.SubclassedSeries)
 
     def test_apply_same_length_inference_bug(self):
         s = Series([1, 2])
@@ -2119,3 +2127,9 @@ class TestSeriesAnalytics(TestData, tm.TestCase):
         tpls = [('a', 1), ('a', 2), ('b', nan), ('b', 1)]
         right.index = pd.MultiIndex.from_tuples(tpls)
         assert_frame_equal(ts.unstack(level=0), right)
+
+    def test_unstack_subclassing(self):
+        index = MultiIndex(levels=[['bar', 'foo'], ['one', 'three', 'two']],
+                           labels=[[1, 1, 0, 0], [0, 1, 0, 2]])
+        s = tm.SubclassedSeries(np.arange(4.), index=index)
+        tm.assertIsInstance(s.unstack(), tm.SubclassedDataFrame)
