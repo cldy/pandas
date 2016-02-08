@@ -278,8 +278,8 @@ def _isnull_ndarraylike(obj):
 
     # box
     if isinstance(obj, ABCSeries):
-        from pandas import Series
-        result = Series(result, index=obj.index, name=obj.name, copy=False)
+        result = obj._constructor_sliced(
+            result, index=obj.index, name=obj.name, copy=False)
 
     return result
 
@@ -307,8 +307,8 @@ def _isnull_ndarraylike_old(obj):
 
     # box
     if isinstance(obj, ABCSeries):
-        from pandas import Series
-        result = Series(result, index=obj.index, name=obj.name, copy=False)
+        result = obj._constructor(
+            result, index=obj.index, name=obj.name, copy=False)
 
     return result
 
@@ -333,7 +333,7 @@ def notnull(obj):
     pandas.isnull : boolean inverse of pandas.notnull
     """
     res = isnull(obj)
-    if lib.isscalar(res):
+    if np.isscalar(res):
         return not res
     return ~res
 
@@ -343,7 +343,7 @@ def is_null_datelike_scalar(other):
     but guard against passing a non-scalar """
     if other is pd.NaT or other is None:
         return True
-    elif lib.isscalar(other):
+    elif np.isscalar(other):
 
         # a timedelta
         if hasattr(other, 'dtype'):
@@ -489,7 +489,7 @@ def mask_missing(arr, values_to_mask):
 
             # if x is a string and arr is not, then we get False and we must
             # expand the mask to size arr.shape
-            if lib.isscalar(mask):
+            if np.isscalar(mask):
                 mask = np.zeros(arr.shape, dtype=bool)
         else:
 
@@ -1276,7 +1276,7 @@ def _maybe_upcast_putmask(result, mask, other):
 
             # we have a scalar or len 0 ndarray
             # and its nan and we are changing some values
-            if (lib.isscalar(other) or
+            if (np.isscalar(other) or
                     (isinstance(other, np.ndarray) and other.ndim < 1)):
                 if isnull(other):
                     return changeit()
@@ -1336,7 +1336,7 @@ def _possibly_downcast_to_dtype(result, dtype):
     or could be an astype of float64->float32
     """
 
-    if lib.isscalar(result):
+    if np.isscalar(result):
         return result
 
     def trans(x):
@@ -1390,7 +1390,7 @@ def _possibly_downcast_to_dtype(result, dtype):
             # if we have any nulls, then we are done
             if isnull(arr).any() or not np.allclose(arr,
                                                     trans(arr).astype(dtype)):
-                return result
+                    return result
 
             # a comparable, e.g. a Decimal may slip in here
             elif not isinstance(r[0], (np.integer, np.floating, np.bool, int,

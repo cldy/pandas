@@ -881,6 +881,7 @@ class IndexOpsMixin(object):
         """
         from pandas.core.algorithms import value_counts
         from pandas.tseries.api import DatetimeIndex, PeriodIndex
+        from pandas import Index
         result = value_counts(self, sort=sort, ascending=ascending,
                               normalize=normalize, bins=bins, dropna=dropna)
 
@@ -891,7 +892,11 @@ class IndexOpsMixin(object):
         elif isinstance(self, DatetimeIndex):
             result.index = self._simple_new(result.index.values,
                                             tz=getattr(self, 'tz', None))
-        return result
+
+        if isinstance(self, Index):
+            return result
+        else:
+            return self._constructor(result)
 
     def unique(self):
         """

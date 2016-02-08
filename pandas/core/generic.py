@@ -1752,7 +1752,7 @@ class NDFrame(PandasObject):
                 new_index = self.index[loc]
 
         if lib.isscalar(loc):
-            from pandas import Series
+
             new_values = self._data.fast_xs(loc)
 
             # may need to box a datelike-scalar
@@ -1763,9 +1763,10 @@ class NDFrame(PandasObject):
             if not is_list_like(new_values) or self.ndim == 1:
                 return _maybe_box_datetimelike(new_values)
 
-            result = Series(new_values, index=self.columns,
-                            name=self.index[loc], copy=copy,
-                            dtype=new_values.dtype)
+            result = self._constructor_sliced(
+                new_values, index=self.columns,
+                name=self.index[loc], copy=copy,
+                dtype=new_values.dtype)
 
         else:
             result = self.iloc[loc]
@@ -4837,7 +4838,8 @@ class NDFrame(PandasObject):
                           [pretty_name(x) for x in percentiles] + ['max'])
             d = ([series.count(), series.mean(), series.std(), series.min()] +
                  [series.quantile(x) for x in percentiles] + [series.max()])
-            return pd.Series(d, index=stat_index, name=series.name)
+            return self._constructor_sliced(
+                d, index=stat_index, name=series.name)
 
         def describe_categorical_1d(data):
             names = ['count', 'unique']
@@ -4857,7 +4859,8 @@ class NDFrame(PandasObject):
                     names += ['top', 'freq']
                     result += [top, freq]
 
-            return pd.Series(result, index=names, name=data.name)
+            return self._constructor_sliced(
+                result, index=names, name=data.name)
 
         def describe_1d(data, percentiles):
             if com.is_bool_dtype(data):

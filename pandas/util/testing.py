@@ -2307,6 +2307,21 @@ def test_parallel(num_threads=2, kwargs_list=None):
     return wrapper
 
 
+class SubclassedSeries(Series):
+
+    @property
+    def _constructor(self):
+        return SubclassedSeries
+
+    @property
+    def _constructor_expanddim(self):
+        return SubclassedDataFrame
+
+    @property
+    def _constructor_sliced(self):
+        return SubclassedSeries
+
+
 class SubclassedDataFrame(DataFrame):
     _metadata = ['testattr']
 
@@ -2314,11 +2329,15 @@ class SubclassedDataFrame(DataFrame):
     def _constructor(self):
         return SubclassedDataFrame
 
+    @property
+    def _constructor_sliced(self):
+        return SubclassedSeries
+
+
 
 @contextmanager
 def patch(ob, attr, value):
     """Temporarily patch an attribute of an object.
-
     Parameters
     ----------
     ob : any
@@ -2327,7 +2346,6 @@ def patch(ob, attr, value):
         The name of the attribute to patch.
     value : any
         The temporary attribute to assign.
-
     Examples
     --------
     >>> class C(object):
@@ -2342,7 +2360,6 @@ def patch(ob, attr, value):
     'patched'
     >>> C.attribute  # the value is reset when the context manager exists
     'original'
-
     Correctly replaces attribute when the manager exits with an exception.
     >>> with patch(C, 'attribute', 'patched'):
     ...     in_context = C.attribute
@@ -2365,3 +2382,4 @@ def patch(ob, attr, value):
             delattr(ob, attr)
         else:
             setattr(ob, attr, old)
+
