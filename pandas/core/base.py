@@ -890,7 +890,7 @@ class IndexOpsMixin(object):
         elif isinstance(self, DatetimeIndex):
             result.index = self._simple_new(result.index.values,
                                             tz=getattr(self, 'tz', None))
-        return result
+        return self._constructor(result)
 
     def unique(self):
         """
