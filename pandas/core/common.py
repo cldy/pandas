@@ -278,9 +278,8 @@ def _isnull_ndarraylike(obj):
 
     # box
     if isinstance(obj, ABCSeries):
-        from pandas import Series
         result = obj._constructor_sliced(
-                  result, index=obj.index, name=obj.name, copy=False)
+            result, index=obj.index, name=obj.name, copy=False)
 
     return result
 
@@ -308,9 +307,8 @@ def _isnull_ndarraylike_old(obj):
 
     # box
     if isinstance(obj, ABCSeries):
-        from pandas import Series
         result = obj._constructor(
-                  result, index=obj.index, name=obj.name, copy=False)
+            result, index=obj.index, name=obj.name, copy=False)
 
     return result
 
