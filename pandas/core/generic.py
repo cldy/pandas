@@ -1511,9 +1511,9 @@ class NDFrame(PandasObject):
                 return _maybe_box_datetimelike(new_values)
 
             result = self._constructor_sliced(
-                        new_values, index=self.columns,
-                        name=self.index[loc], copy=copy,
-                        dtype=new_values.dtype)
+                new_values, index=self.columns,
+                name=self.index[loc], copy=copy,
+                dtype=new_values.dtype)
 
         else:
             result = self.iloc[loc]
