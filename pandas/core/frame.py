@@ -1905,9 +1905,9 @@ class DataFrame(NDFrame):
                     copy = (isinstance(new_values, np.ndarray) and
                             new_values.base is None)
                     result = self._constructor_sliced(
-                                new_values,
-                                index=self.columns, name=self.index[i],
-                                dtype=new_values.dtype)
+                        new_values,
+                        index=self.columns, name=self.index[i],
+                        dtype=new_values.dtype)
                 result._set_is_copy(self, copy=copy)
                 return result
 
