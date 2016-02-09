@@ -249,6 +249,11 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
     def _constructor_expanddim(self):
         from pandas.core.frame import DataFrame
         return DataFrame
+        
+    @property
+    def _constructor_sliced(self):
+        from pandas.core.frame import DataFrame
+        return Series
 
     # types
     @property
