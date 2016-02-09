@@ -335,7 +335,9 @@ class _GroupBy(PandasObject, SelectionMixin):
 
         self.input_constructor = obj._constructor
         self.input_constructor_sliced = obj._constructor_sliced
-        self.input_constructor_expanddim = obj._constructor_expanddim
+        self.input_lenshape = len(obj.shape)
+        if self.input_lenshape == 1:
+            self.input_constructor_expanddim = obj._constructor_expanddim
         self.as_index = as_index
         self.keys = keys
         self.sort = sort
@@ -1265,7 +1267,7 @@ class GroupBy(_GroupBy):
 
         index = self._selected_obj.index
         cumcounts = self._cumcount_array(ascending=ascending)
-        return Series(cumcounts, index)
+        return self.input_constructor_sliced(cumcounts, index)
 
     @Substitution(name='groupby')
     @Appender(_doc_template)
@@ -2604,7 +2606,11 @@ class SeriesGroupBy(GroupBy):
             if _level:
                 return results
             return list(compat.itervalues(results))[0]
-        return self.input_constructor(results, columns=columns)
+
+        if self.input_lenshape == 2:
+            return self.input_constructor(results, columns=columns)
+        elif self.inpuz_lenshape == 1:
+            return self.inpuz_constructor_expanddim(results, columns=columns)
 
     def _wrap_output(self, output, index, names=None):
         """ common agg/transform wrapping logic """
