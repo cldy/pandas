@@ -14,6 +14,7 @@ _shared_docs = dict()
 _indexops_doc_kwargs = dict(klass='IndexOpsMixin', inplace='',
                             duplicated='IndexOpsMixin')
 
+
 class StringMixin(object):
     """implements string methods so long as object defines a `__unicode__`
     method.
