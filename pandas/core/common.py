@@ -278,10 +278,13 @@ def _isnull_ndarraylike(obj):
 
     # box
     if isinstance(obj, ABCSeries):
-        result = obj._constructor_sliced(
-            result, index=obj.index, name=obj.name, copy=False)
-
-    return result
+        from pandas import Series
+        if isinstance(obj,Series):
+            result = obj._constructor_sliced(
+              result, index=obj.index, name=obj.name, copy=False)
+        else:
+            result = Series(
+              result, index=obj.index, name=obj.name, copy=False)
 
 
 def _isnull_ndarraylike_old(obj):
