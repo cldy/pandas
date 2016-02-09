@@ -285,6 +285,8 @@ def _isnull_ndarraylike(obj):
         else:
             result = Series(
               result, index=obj.index, name=obj.name, copy=False)
+              
+    return result
 
 
 def _isnull_ndarraylike_old(obj):
