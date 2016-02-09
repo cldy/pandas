@@ -333,6 +333,9 @@ class _GroupBy(PandasObject, SelectionMixin):
             if axis != 0:
                 raise ValueError('as_index=False only valid for axis=0')
 
+        self.input_constructor = obj._constructor
+        self.input_constructor_sliced = obj._constructor_sliced
+        self.input_constructor_expanddim = obj._constructor_expanddim
         self.as_index = as_index
         self.keys = keys
         self.sort = sort
@@ -2546,7 +2549,7 @@ class SeriesGroupBy(GroupBy):
         if not self.as_index:  # pragma: no cover
             print('Warning, ignoring as_index=True')
 
-        return ret
+        return self.input_constructor(ret)
 
     agg = aggregate
 
@@ -2601,19 +2604,21 @@ class SeriesGroupBy(GroupBy):
             if _level:
                 return results
             return list(compat.itervalues(results))[0]
-        return DataFrame(results, columns=columns)
+        return self.input_constructor(results, columns=columns)
 
     def _wrap_output(self, output, index, names=None):
         """ common agg/transform wrapping logic """
         output = output[self.name]
 
         if names is not None:
-            return DataFrame(output, index=index, columns=names)
+            return self.input_constructor_expanddim(
+                output, index=index, columns=names)
         else:
             name = self.name
             if name is None:
                 name = self._selected_obj.name
-            return Series(output, index=index, name=name)
+            return self.input_constructor(
+                output, index=index, name=name)
 
     def _wrap_aggregated_output(self, output, names=None):
         return self._wrap_output(output=output,
@@ -2820,9 +2825,10 @@ class SeriesGroupBy(GroupBy):
             inc[idx] = 1
 
         out = np.add.reduceat(inc, idx).astype('int64', copy=False)
-        return Series(out if ids[0] != -1 else out[1:],
-                      index=self.grouper.result_index,
-                      name=self.name)
+        return self.input_constructor_sliced(
+            out if ids[0] != -1 else out[1:],
+            index=self.grouper.result_index,
+            name=self.name)
 
     @deprecate_kwarg('take_last', 'keep',
                      mapping={True: 'last', False: 'first'})
@@ -3069,7 +3075,8 @@ class NDFrameGroupBy(GroupBy):
                         result.columns.levels[0],
                         name=self._selected_obj.columns.name)
                 except:
-                    result = self._aggregate_generic(arg, *args, **kwargs)
+                    result = self.input_constructor(
+                        self._aggregate_generic(arg, *args, **kwargs))
 
         if not self.as_index:
             self._insert_inaxis_grouper_inplace(result)
@@ -3636,7 +3643,8 @@ class DataFrameGroupBy(NDFrameGroupBy):
         if self.axis == 1:
             result = result.T
 
-        return self._reindex_output(result)._convert(datetime=True)
+        return self.input_constructor(
+            self._reindex_output(result)._convert(datetime=True))
 
     def _reindex_output(self, result):
         """
