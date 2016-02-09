@@ -2609,8 +2609,8 @@ class SeriesGroupBy(GroupBy):
 
         if self.input_lenshape == 2:
             return self.input_constructor(results, columns=columns)
-        elif self.inpuz_lenshape == 1:
-            return self.inpuz_constructor_expanddim(results, columns=columns)
+        elif self.input_lenshape == 1:
+            return self.input_constructor_expanddim(results, columns=columns)
 
     def _wrap_output(self, output, index, names=None):
         """ common agg/transform wrapping logic """
