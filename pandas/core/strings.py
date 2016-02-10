@@ -1116,10 +1116,12 @@ class StringMethods(NoNewAttributesMixin):
                 if is_bool_dtype(result):
                     return result
                 return Index(result, name=name)
-            return Series(result, index=self._orig.index, name=name)
+            return self._orig._constructor_sliced(
+              result, index=self._orig.index, name=name)
         else:
             assert result.ndim < 3
-            return DataFrame(result, index=self._orig.index)
+            return self._orig._constructor_expanddim(
+              result, index=self._orig.index)
 
     def _wrap_result_expand(self, result, expand=False):
         if not isinstance(expand, bool):
