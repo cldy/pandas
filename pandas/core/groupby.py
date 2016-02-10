@@ -2546,12 +2546,12 @@ class SeriesGroupBy(GroupBy):
                 result = self._aggregate_named(func_or_funcs, *args, **kwargs)
 
             index = Index(sorted(result), name=self.grouper.names[0])
-            ret = Series(result, index=index)
+            ret = self.input_constructor(result, index=index)
 
         if not self.as_index:  # pragma: no cover
             print('Warning, ignoring as_index=True')
 
-        return self.input_constructor(ret)
+        return ret
 
     agg = aggregate
 
@@ -3081,8 +3081,11 @@ class NDFrameGroupBy(GroupBy):
                         result.columns.levels[0],
                         name=self._selected_obj.columns.name)
                 except:
-                    result = self.input_constructor(
-                        self._aggregate_generic(arg, *args, **kwargs))
+                    if self.input_lenshape == 2:
+                        result = self.input_constructor(
+                            self._aggregate_generic(arg, *args, **kwargs))
+                    else:
+                        result = self._aggregate_generic(arg, *args, **kwargs)
 
         if not self.as_index:
             self._insert_inaxis_grouper_inplace(result)
