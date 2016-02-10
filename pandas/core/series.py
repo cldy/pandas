@@ -2044,7 +2044,12 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         unstacked : DataFrame
         """
         from pandas.core.reshape import unstack
-        return self._constructor_expanddim(unstack(self, level, fill_value))
+        result = unstack(self, level, fill_value)
+        from pandas.core.frame import DataFrame
+        if isinstance(result, DataFrame):
+            return self._constructor_expanddim(result)
+        else:
+            return result
 
     # ----------------------------------------------------------------------
     # function application
