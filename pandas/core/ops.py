@@ -769,10 +769,10 @@ def _comp_method_SERIES(op, name, str_rep, masker=False):
         from pandas.sparse.api import SparseSeries
         if isinstance(self, SparseSeries):
             res = pd.Series(
-              res, index=self.index, name=self.name, dtype='bool')
+                  res, index=self.index, name=self.name, dtype='bool')
         else:
             res = self._constructor(
-              res, index=self.index, name=self.name, dtype='bool')
+                  res, index=self.index, name=self.name, dtype='bool')
         return res
 
     return wrapper
