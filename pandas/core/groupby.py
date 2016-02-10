@@ -2966,8 +2966,8 @@ class SeriesGroupBy(GroupBy):
         out = np.bincount(ids[mask], minlength=ngroups or None)
 
         return self.input_constructor_sliced(
-                out, index=self.grouper.result_index,
-                name=self.name, dtype='int64')
+            out, index=self.grouper.result_index,
+            name=self.name, dtype='int64')
 
     def _apply_to_column_groupbys(self, func):
         """ return a pass thru """
