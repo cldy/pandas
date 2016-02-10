@@ -325,7 +325,7 @@ def pivot(self, index=None, columns=None, values=None):
             index = self.index
         else:
             index = self[index]
-        indexed = Series(self[values].values,
+        indexed = self._constructor_sliced(self[values].values,
                          index=MultiIndex.from_arrays([index, self[columns]]))
         return indexed.unstack(columns)
 
@@ -434,8 +434,8 @@ def _unstack_frame(obj, level, fill_value=None):
             newb = make_block(new_values.T, placement=new_placement)
             new_blocks.append(newb)
 
-        result = DataFrame(BlockManager(new_blocks, new_axes))
-        mask_frame = DataFrame(BlockManager(mask_blocks, new_axes))
+        result = obj._constructor(BlockManager(new_blocks, new_axes))
+        mask_frame = obj._constructor(BlockManager(mask_blocks, new_axes))
         return result.ix[:, mask_frame.sum(0) > 0]
     else:
         unstacker = _Unstacker(obj.values, obj.index, level=level,
