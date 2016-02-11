@@ -11,6 +11,7 @@ from numpy import nan, random
 import numpy as np
 
 from pandas.compat import lrange
+from pandas import compat
 from pandas import (DataFrame, Series, MultiIndex, Timestamp,
                     date_range)
 import pandas.core.common as com
