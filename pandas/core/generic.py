@@ -4673,7 +4673,7 @@ class NDFrame(PandasObject):
                     names.append(name)
         d = pd.concat(ldesc, join_axes=pd.Index([names]), axis=1)
         d.columns.names = data.columns.names
-        return d
+        return self._constructor(d)
 
     def _check_percentile(self, q):
         """Validate percentiles (used by describe and quantile)."""
