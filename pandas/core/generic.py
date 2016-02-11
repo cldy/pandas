@@ -4616,7 +4616,8 @@ class NDFrame(PandasObject):
                           [pretty_name(x) for x in percentiles] + ['max'])
             d = ([series.count(), series.mean(), series.std(), series.min()] +
                  [series.quantile(x) for x in percentiles] + [series.max()])
-            return self._constructor_sliced(d, index=stat_index, name=series.name)
+            return self._constructor_sliced(
+                d, index=stat_index, name=series.name)
 
         def describe_categorical_1d(data):
             names = ['count', 'unique']
@@ -4637,7 +4638,8 @@ class NDFrame(PandasObject):
                                lib.Timestamp(asint.min()),
                                lib.Timestamp(asint.max())]
 
-            return self._constructor_sliced(result, index=names, name=data.name)
+            return self._constructor_sliced(
+                result, index=names, name=data.name)
 
         def describe_1d(data, percentiles):
             if com.is_numeric_dtype(data):
