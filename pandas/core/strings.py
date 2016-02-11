@@ -1099,8 +1099,6 @@ class StringMethods(NoNewAttributesMixin):
 
         # leave as it is to keep extract and get_dummies results
         # can be merged to _wrap_result_expand in v0.17
-        from pandas.core.series import Series
-        from pandas.core.frame import DataFrame
         from pandas.core.index import Index
 
         if not hasattr(result, 'ndim'):
@@ -1116,10 +1114,12 @@ class StringMethods(NoNewAttributesMixin):
                 if is_bool_dtype(result):
                     return result
                 return Index(result, name=name)
-            return Series(result, index=self._orig.index, name=name)
+            return self._orig._constructor_sliced(
+                result, index=self._orig.index, name=name)
         else:
             assert result.ndim < 3
-            return DataFrame(result, index=self._orig.index)
+            return self._orig._constructor_expanddim(
+                result, index=self._orig.index)
 
     def _wrap_result_expand(self, result, expand=False):
         if not isinstance(expand, bool):

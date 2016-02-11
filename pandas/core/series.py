@@ -250,6 +250,10 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         from pandas.core.frame import DataFrame
         return DataFrame
 
+    @property
+    def _constructor_sliced(self):
+        return Series
+
     # types
     @property
     def _can_hold_na(self):
@@ -2040,7 +2044,12 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         unstacked : DataFrame
         """
         from pandas.core.reshape import unstack
-        return unstack(self, level, fill_value)
+        result = unstack(self, level, fill_value)
+        from pandas.core.frame import DataFrame
+        if isinstance(result, DataFrame):
+            return self._constructor_expanddim(result)
+        else:
+            return result
 
     # ----------------------------------------------------------------------
     # function application

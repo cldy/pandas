@@ -928,6 +928,12 @@ class _Concatenator(object):
             raise AssertionError("axis must be between 0 and {0}, "
                                  "input was {1}".format(sample.ndim, axis))
 
+        self._constructor_series = sample._constructor_sliced
+        if self._is_series:
+            self._constructor_frame = sample._constructor_expanddim
+        elif self._is_frame:
+            self._constructor_frame = sample._constructor
+
         # if we have mixed ndims, then convert to highest ndim
         # creating column numbers as needed
         if len(ndims) > 1:
@@ -980,14 +986,15 @@ class _Concatenator(object):
             if self.axis == 0:
                 new_data = com._concat_compat([x._values for x in self.objs])
                 name = com._consensus_name_attr(self.objs)
-                return (Series(new_data, index=self.new_axes[0], name=name)
-                        .__finalize__(self, method='concat'))
+                return (self._constructor_series(
+                    new_data, index=self.new_axes[0], name=name)
+                    .__finalize__(self, method='concat'))
 
             # combine as columns in a frame
             else:
                 data = dict(zip(range(len(self.objs)), self.objs))
                 index, columns = self.new_axes
-                tmpdf = DataFrame(data, index=index)
+                tmpdf = self._constructor_frame(data, index=index)
                 # checks if the column variable already stores valid column
                 # names (because set via the 'key' argument in the 'concat'
                 # function call. If that's not the case, use the series names
