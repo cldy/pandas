@@ -4637,7 +4637,7 @@ class NDFrame(PandasObject):
                                lib.Timestamp(asint.min()),
                                lib.Timestamp(asint.max())]
 
-            return pd.Series(result, index=names, name=data.name)
+            return self._constructor_sliced(result, index=names, name=data.name)
 
         def describe_1d(data, percentiles):
             if com.is_numeric_dtype(data):
