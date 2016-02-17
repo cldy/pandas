@@ -5557,8 +5557,9 @@ class TestGroupBy(tm.TestCase):
              'cumprod', 'tail', 'resample', 'cummin', 'fillna', 'cumsum',
              'cumcount', 'all', 'shift', 'skew', 'bfill', 'ffill', 'take',
              'tshift', 'pct_change', 'any', 'mad', 'corr', 'corrwith', 'cov',
-             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin','inputconstructor',
-             'inputconstructor_sliced', 'inputconstructor_expanddim','lenshape'])
+             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin', 'inputconstructor',
+             'inputconstructor_sliced', 'inputconstructor_expanddim',
+             'lenshape'])
         self.assertEqual(results, expected)
 
     def test_lexsort_indexer(self):
