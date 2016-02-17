@@ -382,7 +382,7 @@ class _GroupBy(PandasObject, SelectionMixin):
         """ dict {group name -> group indices} """
         self._assure_grouper()
         return self.grouper.indices
-        
+
     @property
     def inputconstructor(self):
         return self._inputconstructor
@@ -1298,7 +1298,7 @@ class GroupBy(_GroupBy):
 
         index = self._selected_obj.index
         cumcounts = self._cumcount_array(ascending=ascending)
-        return self.input_constructor_sliced(cumcounts, index)
+        return self.inputconstructor_sliced(cumcounts, index)
 
     @Substitution(name='groupby')
     @Appender(_doc_template)
@@ -2577,7 +2577,7 @@ class SeriesGroupBy(GroupBy):
                 result = self._aggregate_named(func_or_funcs, *args, **kwargs)
 
             index = Index(sorted(result), name=self.grouper.names[0])
-            ret = self.input_constructor(result, index=index)
+            ret = self.inputconstructor(result, index=index)
 
         if not self.as_index:  # pragma: no cover
             print('Warning, ignoring as_index=True')
