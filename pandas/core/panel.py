@@ -129,7 +129,7 @@ class Panel(NDFrame):
         return type(self)
 
     _constructor_sliced = DataFrame
-    
+
     _constructor_expanddim = _constructor
 
     def __init__(self, data=None, items=None, major_axis=None, minor_axis=None,
