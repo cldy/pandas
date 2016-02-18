@@ -1,7 +1,6 @@
 # coding=utf-8
 # pylint: disable-msg=E1101,W0612
 
-from inspect import getargspec
 from itertools import product
 from distutils.version import LooseVersion
 
@@ -465,7 +464,7 @@ class TestSeriesAnalytics(TestData, tm.TestCase):
             self.assertRaises(ValueError, f, self.series, axis=1)
 
             # Unimplemented numeric_only parameter.
-            if 'numeric_only' in getargspec(f).args:
+            if 'numeric_only' in compat.signature(f).args:
                 self.assertRaisesRegexp(NotImplementedError, name, f,
                                         self.series, numeric_only=True)
 
@@ -960,10 +959,10 @@ class TestSeriesAnalytics(TestData, tm.TestCase):
         filled = self.ts.fillna(np.inf)
 
         # rankdata returns a ndarray
-        exp = Series(rankdata(filled), index=filled.index)
+        exp = Series(rankdata(filled), index=filled.index, name='ts')
         exp[mask] = np.nan
 
-        assert_almost_equal(ranks, exp)
+        tm.assert_series_equal(ranks, exp)
 
         iseries = Series(np.arange(5).repeat(2))
 

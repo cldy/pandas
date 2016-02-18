@@ -14,7 +14,7 @@ from pandas.core.common import (_possibly_downcast_to_dtype, isnull, _NS_DTYPE,
                                 is_dtype_equal, is_null_datelike_scalar,
                                 _maybe_promote, is_timedelta64_dtype,
                                 is_datetime64_dtype, is_datetimetz, is_sparse,
-                                array_equivalent,
+                                array_equivalent, _is_na_compat,
                                 _maybe_convert_string_to_object,
                                 is_categorical, is_datetimelike_v_numeric,
                                 is_numeric_v_string_like, is_internal_type)
@@ -1380,8 +1380,9 @@ class FloatBlock(FloatOrComplexBlock):
         from pandas.core.format import FloatArrayFormatter
         formatter = FloatArrayFormatter(values, na_rep=na_rep,
                                         float_format=float_format,
-                                        decimal=decimal, quoting=quoting)
-        return formatter.get_formatted_data()
+                                        decimal=decimal, quoting=quoting,
+                                        fixed_width=False)
+        return formatter.get_result_as_array()
 
     def should_store(self, value):
         # when inserting a column should not coerce integers to floats
@@ -2097,6 +2098,14 @@ class DatetimeTZBlock(NonConsolidatableMixIn, DatetimeBlock):
 
         if not isinstance(values, self._holder):
             values = self._holder(values)
+
+        dtype = kwargs.pop('dtype', None)
+
+        if dtype is not None:
+            if isinstance(dtype, compat.string_types):
+                dtype = DatetimeTZDtype.construct_from_string(dtype)
+            values = values.tz_localize('UTC').tz_convert(dtype.tz)
+
         if values.tz is None:
             raise ValueError("cannot create a DatetimeTZBlock without a tz")
 
@@ -2426,6 +2435,10 @@ def make_block(values, placement, klass=None, ndim=None, dtype=None,
             klass = CategoricalBlock
         else:
             klass = ObjectBlock
+
+    elif klass is DatetimeTZBlock and not is_datetimetz(values):
+        return klass(values, ndim=ndim, fastpath=fastpath,
+                     placement=placement, dtype=dtype)
 
     return klass(values, ndim=ndim, fastpath=fastpath, placement=placement)
 
@@ -4379,7 +4392,6 @@ def _putmask_smart(v, m, n):
     m : `mask`, applies to both sides (array like)
     n : `new values` either scalar or an array like aligned with `values`
     """
-
     # n should be the length of the mask or a scalar here
     if not is_list_like(n):
         n = np.array([n] * len(m))
@@ -4390,6 +4402,12 @@ def _putmask_smart(v, m, n):
     # will work in the current dtype
     try:
         nn = n[m]
+
+        # make sure that we have a nullable type
+        # if we have nulls
+        if not _is_na_compat(v, nn[0]):
+            raise ValueError
+
         nn_at = nn.astype(v.dtype)
 
         # avoid invalid dtype comparisons

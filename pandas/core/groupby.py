@@ -31,7 +31,8 @@ from pandas.core.common import(_possibly_downcast_to_dtype, isnull,
                                is_timedelta64_dtype, is_datetime64_dtype,
                                is_categorical_dtype, _values_from_object,
                                is_datetime_or_timedelta_dtype, is_bool,
-                               is_bool_dtype, AbstractMethodError)
+                               is_bool_dtype, AbstractMethodError,
+                               _maybe_fill)
 from pandas.core.config import option_context
 import pandas.lib as lib
 from pandas.lib import Timestamp
@@ -1761,14 +1762,15 @@ class BaseGrouper(object):
         labels, _, _ = self.group_info
 
         if kind == 'aggregate':
-            result = np.empty(out_shape, dtype=out_dtype)
-            result.fill(np.nan)
+            result = _maybe_fill(np.empty(out_shape, dtype=out_dtype),
+                                 fill_value=np.nan)
             counts = np.zeros(self.ngroups, dtype=np.int64)
             result = self._aggregate(
                 result, counts, values, labels, func, is_numeric)
         elif kind == 'transform':
-            result = np.empty_like(values, dtype=out_dtype)
-            result.fill(np.nan)
+            result = _maybe_fill(np.empty_like(values, dtype=out_dtype),
+                                 fill_value=np.nan)
+
             # temporary storange for running-total type tranforms
             accum = np.empty(out_shape, dtype=out_dtype)
             result = self._transform(
@@ -2562,7 +2564,8 @@ class SeriesGroupBy(GroupBy):
             return getattr(self, func_or_funcs)(*args, **kwargs)
 
         if hasattr(func_or_funcs, '__iter__'):
-            ret = self._aggregate_multiple_funcs(func_or_funcs, _level)
+            ret = self._aggregate_multiple_funcs(func_or_funcs,
+                                                 (_level or 0) + 1)
         else:
             cyfunc = self._is_cython_func(func_or_funcs)
             if cyfunc and not args and not kwargs:
@@ -2582,6 +2585,10 @@ class SeriesGroupBy(GroupBy):
         if not self.as_index:  # pragma: no cover
             print('Warning, ignoring as_index=True')
 
+        # _level handled at higher
+        if not _level and isinstance(ret, dict):
+            from pandas import concat
+            ret = concat(ret, axis=1)
         return ret
 
     agg = aggregate
@@ -2606,14 +2613,6 @@ class SeriesGroupBy(GroupBy):
                     # protect against callables without names
                     columns.append(com._get_callable_name(f))
             arg = lzip(columns, arg)
-
-        # for a ndim=1, disallow a nested dict for an aggregator as
-        # this is a mis-specification of the aggregations, via a
-        # specificiation error
-        # e.g. g['A'].agg({'A': ..., 'B': ...})
-        if self.name in columns and len(columns) > 1:
-            raise SpecificationError('invalid aggregation names specified '
-                                     'for selected objects')
 
         results = {}
         for name, func in arg:

@@ -419,25 +419,32 @@ class TestResampleAPI(tm.TestCase):
             assert_frame_equal(result, expected, check_like=True)
 
         # series like aggs
-        expected = pd.concat([t['A'].sum(),
-                              t['A'].std()],
-                             axis=1)
-        expected.columns = ['sum', 'std']
-
         for t in [r, g]:
-            result = r['A'].agg({'A': ['sum', 'std']})
+            result = t['A'].agg({'A': ['sum', 'std']})
+            expected = pd.concat([t['A'].sum(),
+                                  t['A'].std()],
+                                 axis=1)
+            expected.columns = pd.MultiIndex.from_tuples([('A', 'sum'),
+                                                          ('A', 'std')])
+            assert_frame_equal(result, expected, check_like=True)
+
+            expected = pd.concat([t['A'].agg(['sum', 'std']),
+                                  t['A'].agg(['mean', 'std'])],
+                                 axis=1)
+            expected.columns = pd.MultiIndex.from_tuples([('A', 'sum'),
+                                                          ('A', 'std'),
+                                                          ('B', 'mean'),
+                                                          ('B', 'std')])
+            result = t['A'].agg({'A': ['sum', 'std'], 'B': ['mean', 'std']})
             assert_frame_equal(result, expected, check_like=True)
 
         # errors
+        # invalid names in the agg specification
         for t in [r, g]:
 
-            # invalid names in the agg specification
             def f():
-                r['A'].agg({'A': ['sum', 'std'], 'B': ['mean', 'std']})
-            self.assertRaises(SpecificationError, f)
-
-            def f():
-                r[['A']].agg({'A': ['sum', 'std'], 'B': ['mean', 'std']})
+                r[['A']].agg({'A': ['sum', 'std'],
+                              'B': ['mean', 'std']})
             self.assertRaises(SpecificationError, f)
 
     def test_agg_nested_dicts(self):
@@ -918,6 +925,31 @@ class TestResample(tm.TestCase):
         self.assertEqual(xs['low'], s[:5].min())
         self.assertEqual(xs['close'], s[4])
 
+    def test_resample_ohlc_result(self):
+
+        # GH 12332
+        index = pd.date_range('1-1-2000', '2-15-2000', freq='h')
+        index = index.union(pd.date_range('4-15-2000', '5-15-2000', freq='h'))
+        s = Series(range(len(index)), index=index)
+
+        a = s.loc[:'4-15-2000'].resample('30T').ohlc()
+        self.assertIsInstance(a, DataFrame)
+
+        b = s.loc[:'4-14-2000'].resample('30T').ohlc()
+        self.assertIsInstance(b, DataFrame)
+
+        # GH12348
+        # raising on odd period
+        rng = date_range('2013-12-30', '2014-01-07')
+        index = rng.drop([Timestamp('2014-01-01'),
+                          Timestamp('2013-12-31'),
+                          Timestamp('2014-01-04'),
+                          Timestamp('2014-01-05')])
+        df = DataFrame(data=np.arange(len(index)), index=index)
+        result = df.resample('B').mean()
+        expected = df.reindex(index=date_range(rng[0], rng[-1], freq='B'))
+        assert_frame_equal(result, expected)
+
     def test_resample_ohlc_dataframe(self):
         df = (
             pd.DataFrame({
@@ -1220,6 +1252,24 @@ class TestResample(tm.TestCase):
                         # (ex: doing mean with dtype of np.object)
                         pass
 
+    def test_resample_dtype_preservation(self):
+
+        # GH 12202
+        # validation tests for dtype preservation
+
+        df = DataFrame({'date': pd.date_range(start='2016-01-01',
+                                              periods=4, freq='W'),
+                        'group': [1, 1, 2, 2],
+                        'val': Series([5, 6, 7, 8],
+                                      dtype='int32')}
+                       ).set_index('date')
+
+        result = df.resample('1D').ffill()
+        self.assertEqual(result.val.dtype, np.int32)
+
+        result = df.groupby('group').resample('1D').ffill()
+        self.assertEqual(result.val.dtype, np.int32)
+
     def test_weekly_resample_buglet(self):
         # #1327
         rng = date_range('1/1/2000', freq='B', periods=20)
@@ -1475,6 +1525,34 @@ class TestResample(tm.TestCase):
 
             result = df.groupby(pd.Grouper(freq='M', key='A')).count()
             assert_frame_equal(result, expected)
+
+    def test_resample_nunique(self):
+
+        # GH 12352
+        df = DataFrame({
+            'ID': {pd.Timestamp('2015-06-05 00:00:00'): '0010100903',
+                   pd.Timestamp('2015-06-08 00:00:00'): '0010150847'},
+            'DATE': {pd.Timestamp('2015-06-05 00:00:00'): '2015-06-05',
+                     pd.Timestamp('2015-06-08 00:00:00'): '2015-06-08'}})
+        r = df.resample('D')
+        g = df.groupby(pd.Grouper(freq='D'))
+        expected = df.groupby(pd.TimeGrouper('D')).ID.apply(lambda x:
+                                                            x.nunique())
+        self.assertEqual(expected.name, 'ID')
+
+        for t in [r, g]:
+            result = r.ID.nunique()
+            assert_series_equal(result, expected)
+
+        # TODO
+        # this should have name
+        # https://github.com/pydata/pandas/issues/12363
+        expected.name = None
+        result = df.ID.resample('D').nunique()
+        assert_series_equal(result, expected)
+
+        result = df.ID.groupby(pd.Grouper(freq='D')).nunique()
+        assert_series_equal(result, expected)
 
     def test_resample_group_info(self):  # GH10914
         for n, k in product((10000, 100000), (10, 100, 1000)):
