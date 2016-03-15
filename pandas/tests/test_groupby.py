@@ -41,7 +41,7 @@ class TestGroupBy(tm.TestCase):
     def setUp(self):
         self.ts = tm.makeTimeSeries()
 
-        self.seriesd = tm.getSeriesData()F===
+        self.seriesd = tm.getSeriesData()
         self.tsd = tm.getTimeSeriesData()
         self.frame = DataFrame(self.seriesd)
         self.tsframe = DataFrame(self.tsd)
