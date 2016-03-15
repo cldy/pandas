@@ -4852,13 +4852,7 @@ class NDFrame(PandasObject):
                     result += [lib.Timestamp(top), freq,
                                lib.Timestamp(asint.min()),
                                lib.Timestamp(asint.max())]
-<<<<<<< HEAD
-                else:
-                    names += ['top', 'freq']
-                    result += [top, freq]
 
-=======
->>>>>>> 7dd80505454951ca42e75d39ed8f22df934daa35
             return self._constructor_sliced(
                 result, index=names, name=data.name)
 
