@@ -41,7 +41,7 @@ class TestGroupBy(tm.TestCase):
     def setUp(self):
         self.ts = tm.makeTimeSeries()
 
-        self.seriesd = tm.getSeriesData()
+        self.seriesd = tm.getSeriesData()F===
         self.tsd = tm.getTimeSeriesData()
         self.frame = DataFrame(self.seriesd)
         self.tsframe = DataFrame(self.tsd)
@@ -5641,9 +5641,9 @@ class TestGroupBy(tm.TestCase):
              'cumprod', 'tail', 'resample', 'cummin', 'fillna', 'cumsum',
              'cumcount', 'all', 'shift', 'skew', 'bfill', 'ffill', 'take',
              'tshift', 'pct_change', 'any', 'mad', 'corr', 'corrwith', 'cov',
-             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin', ,'inputconstructor',
-             'inputconstructor_sliced', 'inputconstructor_expanddim','lenshape', 
-             'ffill', 'bfill', 'pad', 'backfill'])
+             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin', 'inputconstructor',
+             'inputconstructor_sliced', 'inputconstructor_expanddim',
+             'lenshape', 'ffill', 'bfill', 'pad', 'backfill'])
 
         self.assertEqual(results, expected)
 

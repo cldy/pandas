@@ -1305,6 +1305,7 @@ class StringMethods(NoNewAttributesMixin):
         if use_codes and self._is_categorical:
             result = take_1d(result, self._orig.cat.codes)
 
+
         if not hasattr(result, 'ndim') or not hasattr(result, 'dtype'):
             return result
         assert result.ndim < 3
