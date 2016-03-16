@@ -2914,10 +2914,7 @@ class SeriesGroupBy(GroupBy):
             res, out = np.zeros(len(ri), dtype=out.dtype), res
             res[ids] = out
 
-        return self.inputconstructor_sliced(
-            out if ids[0] != -1 else out[1:],
-            index=self.grouper.result_index,
-            name=self.name)
+        return self.inputconstructor_sliced(res, index=ri, name=self.name)
 
     @deprecate_kwarg('take_last', 'keep',
                      mapping={True: 'last', False: 'first'})
