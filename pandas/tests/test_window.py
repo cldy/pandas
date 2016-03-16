@@ -3,6 +3,7 @@ import nose
 import sys
 import warnings
 
+from nose.tools import assert_raises
 from datetime import datetime
 from numpy.random import randn
 from numpy.testing.decorators import slow
@@ -14,7 +15,7 @@ from pandas import (Series, DataFrame, Panel, bdate_range, isnull,
                     notnull, concat)
 from pandas.util.testing import (assert_almost_equal, assert_series_equal,
                                  assert_frame_equal, assert_panel_equal,
-                                 assert_index_equal)
+                                 assert_index_equal, assert_numpy_array_equal)
 import pandas.core.datetools as datetools
 import pandas.stats.moments as mom
 import pandas.core.window as rwindow
@@ -96,19 +97,6 @@ class TestApi(Base):
 
         expected = pd.concat([r[['A', 'B']].sum(), df[['C']]], axis=1)
         result = r.sum()
-        assert_frame_equal(result, expected)
-
-    def test_timedeltas(self):
-
-        df = DataFrame({'A': range(5),
-                        'B': pd.timedelta_range('1 day', periods=5)})
-        r = df.rolling(window=3)
-        result = r.sum()
-        expected = DataFrame({'A': [np.nan, np.nan, 3, 6, 9],
-                              'B': pd.to_timedelta([pd.NaT, pd.NaT,
-                                                    '6 days', '9 days',
-                                                    '12 days'])},
-                             columns=list('AB'))
         assert_frame_equal(result, expected)
 
     def test_agg(self):
@@ -287,6 +275,218 @@ class TestDeprecations(Base):
         with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
             mom.rolling_mean(np.ones(10), 3, center=True, axis=0)
             mom.rolling_mean(Series(np.ones(10)), 3, center=True, axis=0)
+
+
+# GH #12373 : rolling functions error on float32 data
+# make sure rolling functions works for different dtypes
+#
+# NOTE that these are yielded tests and so _create_data is
+# explicity called, nor do these inherit from unittest.TestCase
+#
+# further note that we are only checking rolling for fully dtype
+# compliance (though both expanding and ewm inherit)
+class Dtype(object):
+    window = 2
+
+    funcs = {
+        'count': lambda v: v.count(),
+        'max': lambda v: v.max(),
+        'min': lambda v: v.min(),
+        'sum': lambda v: v.sum(),
+        'mean': lambda v: v.mean(),
+        'std': lambda v: v.std(),
+        'var': lambda v: v.var(),
+        'median': lambda v: v.median()
+    }
+
+    def get_expects(self):
+        expects = {
+            'sr1': {
+                'count': Series([1, 2, 2, 2, 2], dtype='float64'),
+                'max': Series([np.nan, 1, 2, 3, 4], dtype='float64'),
+                'min': Series([np.nan, 0, 1, 2, 3], dtype='float64'),
+                'sum': Series([np.nan, 1, 3, 5, 7], dtype='float64'),
+                'mean': Series([np.nan, .5, 1.5, 2.5, 3.5], dtype='float64'),
+                'std': Series([np.nan] + [np.sqrt(.5)] * 4, dtype='float64'),
+                'var': Series([np.nan, .5, .5, .5, .5], dtype='float64'),
+                'median': Series([np.nan, .5, 1.5, 2.5, 3.5], dtype='float64')
+            },
+            'sr2': {
+                'count': Series([1, 2, 2, 2, 2], dtype='float64'),
+                'max': Series([np.nan, 10, 8, 6, 4], dtype='float64'),
+                'min': Series([np.nan, 8, 6, 4, 2], dtype='float64'),
+                'sum': Series([np.nan, 18, 14, 10, 6], dtype='float64'),
+                'mean': Series([np.nan, 9, 7, 5, 3], dtype='float64'),
+                'std': Series([np.nan] + [np.sqrt(2)] * 4, dtype='float64'),
+                'var': Series([np.nan, 2, 2, 2, 2], dtype='float64'),
+                'median': Series([np.nan, 9, 7, 5, 3], dtype='float64')
+            },
+            'df': {
+                'count': DataFrame({0: Series([1, 2, 2, 2, 2]),
+                                    1: Series([1, 2, 2, 2, 2])},
+                                   dtype='float64'),
+                'max': DataFrame({0: Series([np.nan, 2, 4, 6, 8]),
+                                  1: Series([np.nan, 3, 5, 7, 9])},
+                                 dtype='float64'),
+                'min': DataFrame({0: Series([np.nan, 0, 2, 4, 6]),
+                                  1: Series([np.nan, 1, 3, 5, 7])},
+                                 dtype='float64'),
+                'sum': DataFrame({0: Series([np.nan, 2, 6, 10, 14]),
+                                  1: Series([np.nan, 4, 8, 12, 16])},
+                                 dtype='float64'),
+                'mean': DataFrame({0: Series([np.nan, 1, 3, 5, 7]),
+                                   1: Series([np.nan, 2, 4, 6, 8])},
+                                  dtype='float64'),
+                'std': DataFrame({0: Series([np.nan] + [np.sqrt(2)] * 4),
+                                  1: Series([np.nan] + [np.sqrt(2)] * 4)},
+                                 dtype='float64'),
+                'var': DataFrame({0: Series([np.nan, 2, 2, 2, 2]),
+                                  1: Series([np.nan, 2, 2, 2, 2])},
+                                 dtype='float64'),
+                'median': DataFrame({0: Series([np.nan, 1, 3, 5, 7]),
+                                     1: Series([np.nan, 2, 4, 6, 8])},
+                                    dtype='float64'),
+            }
+        }
+        return expects
+
+    def _create_dtype_data(self, dtype):
+        sr1 = Series(range(5), dtype=dtype)
+        sr2 = Series(range(10, 0, -2), dtype=dtype)
+        df = DataFrame(np.arange(10).reshape((5, 2)), dtype=dtype)
+
+        data = {
+            'sr1': sr1,
+            'sr2': sr2,
+            'df': df
+        }
+
+        return data
+
+    def _create_data(self):
+        self.data = self._create_dtype_data(self.dtype)
+        self.expects = self.get_expects()
+
+    def test_dtypes(self):
+        self._create_data()
+        for f_name, d_name in product(self.funcs.keys(), self.data.keys()):
+            f = self.funcs[f_name]
+            d = self.data[d_name]
+            exp = self.expects[d_name][f_name]
+            yield self.check_dtypes, f, f_name, d, d_name, exp
+
+    def check_dtypes(self, f, f_name, d, d_name, exp):
+        roll = d.rolling(window=self.window)
+        result = f(roll)
+        assert_almost_equal(result, exp)
+
+
+class TestDtype_object(Dtype):
+    dtype = object
+
+
+class Dtype_integer(Dtype):
+    pass
+
+
+class TestDtype_int8(Dtype_integer):
+    dtype = np.int8
+
+
+class TestDtype_int16(Dtype_integer):
+    dtype = np.int16
+
+
+class TestDtype_int32(Dtype_integer):
+    dtype = np.int32
+
+
+class TestDtype_int64(Dtype_integer):
+    dtype = np.int64
+
+
+class Dtype_uinteger(Dtype):
+    pass
+
+
+class TestDtype_uint8(Dtype_uinteger):
+    dtype = np.uint8
+
+
+class TestDtype_uint16(Dtype_uinteger):
+    dtype = np.uint16
+
+
+class TestDtype_uint32(Dtype_uinteger):
+    dtype = np.uint32
+
+
+class TestDtype_uint64(Dtype_uinteger):
+    dtype = np.uint64
+
+
+class Dtype_float(Dtype):
+    pass
+
+
+class TestDtype_float16(Dtype_float):
+    dtype = np.float16
+
+
+class TestDtype_float32(Dtype_float):
+    dtype = np.float32
+
+
+class TestDtype_float64(Dtype_float):
+    dtype = np.float64
+
+
+class TestDtype_category(Dtype):
+    dtype = 'category'
+    include_df = False
+
+    def _create_dtype_data(self, dtype):
+        sr1 = Series(range(5), dtype=dtype)
+        sr2 = Series(range(10, 0, -2), dtype=dtype)
+
+        data = {
+            'sr1': sr1,
+            'sr2': sr2
+        }
+
+        return data
+
+
+class DatetimeLike(Dtype):
+
+    def check_dtypes(self, f, f_name, d, d_name, exp):
+
+        roll = d.rolling(window=self.window)
+
+        if f_name == 'count':
+            result = f(roll)
+            assert_almost_equal(result, exp)
+
+        else:
+
+            # other methods not Implemented ATM
+            assert_raises(NotImplementedError, f, roll)
+
+
+class TestDtype_timedelta(DatetimeLike):
+    dtype = np.dtype('m8[ns]')
+
+
+class TestDtype_datetime(DatetimeLike):
+    dtype = np.dtype('M8[ns]')
+
+
+class TestDtype_datetime64UTC(DatetimeLike):
+    dtype = 'datetime64[ns, UTC]'
+
+    def _create_data(self):
+        raise nose.SkipTest("direct creation of extension dtype "
+                            "datetime64[ns, UTC] is not supported ATM")
 
 
 class TestMoments(Base):
@@ -908,8 +1108,9 @@ class TestMoments(Base):
 
             assert_almost_equal(series_result[-1], static_comp(trunc_series))
 
-            assert_almost_equal(frame_result.xs(last_date),
-                                trunc_frame.apply(static_comp))
+            assert_series_equal(frame_result.xs(last_date),
+                                trunc_frame.apply(static_comp),
+                                check_names=False)
 
         # GH 7925
         if has_center:
@@ -984,11 +1185,11 @@ class TestMoments(Base):
     def test_ewma_nan_handling(self):
         s = Series([1.] + [np.nan] * 5 + [1.])
         result = s.ewm(com=5).mean()
-        assert_almost_equal(result, [1.] * len(s))
+        tm.assert_series_equal(result, Series([1.] * len(s)))
 
         s = Series([np.nan] * 2 + [1.] + [np.nan] * 2 + [1.])
         result = s.ewm(com=5).mean()
-        assert_almost_equal(result, [np.nan] * 2 + [1.] * 4)
+        tm.assert_series_equal(result, Series([np.nan] * 2 + [1.] * 4))
 
         # GH 7603
         s0 = Series([np.nan, 1., 101.])
@@ -1048,8 +1249,8 @@ class TestMoments(Base):
             B = mom.ewma(self.arr, span=20)
             assert_almost_equal(A, B)
 
-            self.assertRaises(Exception, mom.ewma, self.arr, com=9.5, span=20)
-            self.assertRaises(Exception, mom.ewma, self.arr)
+            self.assertRaises(ValueError, mom.ewma, self.arr, com=9.5, span=20)
+            self.assertRaises(ValueError, mom.ewma, self.arr)
 
     def test_ewma_halflife_arg(self):
         with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
@@ -1057,13 +1258,78 @@ class TestMoments(Base):
             B = mom.ewma(self.arr, halflife=10.0)
             assert_almost_equal(A, B)
 
-            self.assertRaises(Exception, mom.ewma, self.arr, span=20,
+            self.assertRaises(ValueError, mom.ewma, self.arr, span=20,
                               halflife=50)
-            self.assertRaises(Exception, mom.ewma, self.arr, com=9.5,
+            self.assertRaises(ValueError, mom.ewma, self.arr, com=9.5,
                               halflife=50)
-            self.assertRaises(Exception, mom.ewma, self.arr, com=9.5, span=20,
+            self.assertRaises(ValueError, mom.ewma, self.arr, com=9.5, span=20,
                               halflife=50)
-            self.assertRaises(Exception, mom.ewma, self.arr)
+            self.assertRaises(ValueError, mom.ewma, self.arr)
+
+    def test_ewma_alpha_old_api(self):
+        # GH 10789
+        with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
+            a = mom.ewma(self.arr, alpha=0.61722699889169674)
+            b = mom.ewma(self.arr, com=0.62014947789973052)
+            c = mom.ewma(self.arr, span=2.240298955799461)
+            d = mom.ewma(self.arr, halflife=0.721792864318)
+            assert_numpy_array_equal(a, b)
+            assert_numpy_array_equal(a, c)
+            assert_numpy_array_equal(a, d)
+
+    def test_ewma_alpha_arg_old_api(self):
+        # GH 10789
+        with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
+            self.assertRaises(ValueError, mom.ewma, self.arr)
+            self.assertRaises(ValueError, mom.ewma, self.arr,
+                              com=10.0, alpha=0.5)
+            self.assertRaises(ValueError, mom.ewma, self.arr,
+                              span=10.0, alpha=0.5)
+            self.assertRaises(ValueError, mom.ewma, self.arr,
+                              halflife=10.0, alpha=0.5)
+
+    def test_ewm_alpha(self):
+        # GH 10789
+        s = Series(self.arr)
+        a = s.ewm(alpha=0.61722699889169674).mean()
+        b = s.ewm(com=0.62014947789973052).mean()
+        c = s.ewm(span=2.240298955799461).mean()
+        d = s.ewm(halflife=0.721792864318).mean()
+        assert_series_equal(a, b)
+        assert_series_equal(a, c)
+        assert_series_equal(a, d)
+
+    def test_ewm_alpha_arg(self):
+        # GH 10789
+        s = Series(self.arr)
+        self.assertRaises(ValueError, s.ewm)
+        self.assertRaises(ValueError, s.ewm, com=10.0, alpha=0.5)
+        self.assertRaises(ValueError, s.ewm, span=10.0, alpha=0.5)
+        self.assertRaises(ValueError, s.ewm, halflife=10.0, alpha=0.5)
+
+    def test_ewm_domain_checks(self):
+        # GH 12492
+        s = Series(self.arr)
+        # com must satisfy: com >= 0
+        self.assertRaises(ValueError, s.ewm, com=-0.1)
+        s.ewm(com=0.0)
+        s.ewm(com=0.1)
+        # span must satisfy: span >= 1
+        self.assertRaises(ValueError, s.ewm, span=-0.1)
+        self.assertRaises(ValueError, s.ewm, span=0.0)
+        self.assertRaises(ValueError, s.ewm, span=0.9)
+        s.ewm(span=1.0)
+        s.ewm(span=1.1)
+        # halflife must satisfy: halflife > 0
+        self.assertRaises(ValueError, s.ewm, halflife=-0.1)
+        self.assertRaises(ValueError, s.ewm, halflife=0.0)
+        s.ewm(halflife=0.1)
+        # alpha must satisfy: 0 < alpha <= 1
+        self.assertRaises(ValueError, s.ewm, alpha=-0.1)
+        self.assertRaises(ValueError, s.ewm, alpha=0.0)
+        s.ewm(alpha=0.1)
+        s.ewm(alpha=1.0)
+        self.assertRaises(ValueError, s.ewm, alpha=1.1)
 
     def test_ew_empty_arrays(self):
         arr = np.array([], dtype=np.float64)

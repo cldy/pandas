@@ -1,7 +1,8 @@
 import numpy as np
 
 from pandas.compat import zip
-from pandas.core.common import (isnull, _values_from_object, is_bool_dtype,
+from pandas.core.common import (isnull, notnull, _values_from_object,
+                                is_bool_dtype,
                                 is_list_like, is_categorical_dtype,
                                 is_object_dtype, take_1d)
 import pandas.compat as compat
@@ -37,7 +38,7 @@ def str_cat(arr, others=None, sep=None, na_rep=None):
       If None, returns str concatenating strings of the Series
     sep : string or None, default None
     na_rep : string or None, default None
-        If None, an NA in any array will propagate
+        If None, NA in the series are ignored.
 
     Returns
     -------
@@ -45,6 +46,15 @@ def str_cat(arr, others=None, sep=None, na_rep=None):
 
     Examples
     --------
+    When ``na_rep`` is `None` (default behavior), NaN value(s)
+    in the Series are ignored.
+
+    >>> Series(['a','b',np.nan,'c']).str.cat(sep=' ')
+    'a b c'
+
+    >>> Series(['a','b',np.nan,'c']).str.cat(sep=' ', na_rep='?')
+    'a b ? c'
+
     If ``others`` is specified, corresponding values are
     concatenated with the separator. Result will be a Series of strings.
 
@@ -103,18 +113,23 @@ def str_cat(arr, others=None, sep=None, na_rep=None):
         arr = np.asarray(arr, dtype=object)
         mask = isnull(arr)
         if na_rep is None and mask.any():
-            return np.nan
+            if sep == '':
+                na_rep = ''
+            else:
+                return sep.join(arr[notnull(arr)])
         return sep.join(np.where(mask, na_rep, arr))
 
 
 def _length_check(others):
     n = None
     for x in others:
-        if n is None:
-            n = len(x)
-        elif len(x) != n:
-            raise ValueError('All arrays must be same length')
-
+        try:
+            if n is None:
+                n = len(x)
+            elif len(x) != n:
+                raise ValueError('All arrays must be same length')
+        except TypeError:
+            raise ValueError("Did you mean to supply a `sep` keyword?")
     return n
 
 
@@ -316,7 +331,7 @@ def str_repeat(arr, repeats):
     -------
     repeated : Series/Index of objects
     """
-    if np.isscalar(repeats):
+    if lib.isscalar(repeats):
 
         def rep(x):
             try:
@@ -418,67 +433,10 @@ def _get_single_group_name(rx):
         return None
 
 
-def str_extract(arr, pat, flags=0):
-    """
-    Find groups in each string in the Series using passed regular
-    expression.
-
-    Parameters
-    ----------
-    pat : string
-        Pattern or regular expression
-    flags : int, default 0 (no flags)
-        re module flags, e.g. re.IGNORECASE
-
-    Returns
-    -------
-    extracted groups : Series (one group) or DataFrame (multiple groups)
-        Note that dtype of the result is always object, even when no match is
-        found and the result is a Series or DataFrame containing only NaN
-        values.
-
-    Examples
-    --------
-    A pattern with one group will return a Series. Non-matches will be NaN.
-
-    >>> Series(['a1', 'b2', 'c3']).str.extract('[ab](\d)')
-    0      1
-    1      2
-    2    NaN
-    dtype: object
-
-    A pattern with more than one group will return a DataFrame.
-
-    >>> Series(['a1', 'b2', 'c3']).str.extract('([ab])(\d)')
-         0    1
-    0    a    1
-    1    b    2
-    2  NaN  NaN
-
-    A pattern may contain optional groups.
-
-    >>> Series(['a1', 'b2', 'c3']).str.extract('([ab])?(\d)')
-         0  1
-    0    a  1
-    1    b  2
-    2  NaN  3
-
-    Named groups will become column names in the result.
-
-    >>> Series(['a1', 'b2', 'c3']).str.extract('(?P<letter>[ab])(?P<digit>\d)')
-      letter digit
-    0      a     1
-    1      b     2
-    2    NaN   NaN
-
-    """
-    from pandas.core.frame import DataFrame
-    from pandas.core.index import Index
-
-    regex = re.compile(pat, flags=flags)
-    # just to be safe, check this
+def _groups_or_na_fun(regex):
+    """Used in both extract_noexpand and extract_frame"""
     if regex.groups == 0:
-        raise ValueError("This pattern contains no groups to capture.")
+        raise ValueError("pattern contains no capture groups")
     empty_row = [np.nan] * regex.groups
 
     def f(x):
@@ -489,9 +447,24 @@ def str_extract(arr, pat, flags=0):
             return [np.nan if item is None else item for item in m.groups()]
         else:
             return empty_row
+    return f
+
+
+def _str_extract_noexpand(arr, pat, flags=0):
+    """
+    Find groups in each string in the Series using passed regular
+    expression. This function is called from
+    str_extract(expand=False), and can return Series, DataFrame, or
+    Index.
+
+    """
+    from pandas import DataFrame, Index
+
+    regex = re.compile(pat, flags=flags)
+    groups_or_na = _groups_or_na_fun(regex)
 
     if regex.groups == 1:
-        result = np.array([f(val)[0] for val in arr], dtype=object)
+        result = np.array([groups_or_na(val)[0] for val in arr], dtype=object)
         name = _get_single_group_name(regex)
     else:
         if isinstance(arr, Index):
@@ -502,9 +475,237 @@ def str_extract(arr, pat, flags=0):
         if arr.empty:
             result = DataFrame(columns=columns, dtype=object)
         else:
-            result = DataFrame([f(val) for val in arr], columns=columns,
-                               index=arr.index, dtype=object)
+            result = DataFrame(
+                [groups_or_na(val) for val in arr],
+                columns=columns,
+                index=arr.index,
+                dtype=object)
     return result, name
+
+
+def _str_extract_frame(arr, pat, flags=0):
+    """
+    For each subject string in the Series, extract groups from the
+    first match of regular expression pat. This function is called from
+    str_extract(expand=True), and always returns a DataFrame.
+
+    """
+    from pandas import DataFrame
+
+    regex = re.compile(pat, flags=flags)
+    groups_or_na = _groups_or_na_fun(regex)
+    names = dict(zip(regex.groupindex.values(), regex.groupindex.keys()))
+    columns = [names.get(1 + i, i) for i in range(regex.groups)]
+
+    if len(arr) == 0:
+        return DataFrame(columns=columns, dtype=object)
+    try:
+        result_index = arr.index
+    except AttributeError:
+        result_index = None
+    return DataFrame(
+        [groups_or_na(val) for val in arr],
+        columns=columns,
+        index=result_index,
+        dtype=object)
+
+
+def str_extract(arr, pat, flags=0, expand=None):
+    """
+    For each subject string in the Series, extract groups from the
+    first match of regular expression pat.
+
+    .. versionadded:: 0.13.0
+
+    Parameters
+    ----------
+    pat : string
+        Regular expression pattern with capturing groups
+    flags : int, default 0 (no flags)
+        re module flags, e.g. re.IGNORECASE
+
+    .. versionadded:: 0.18.0
+    expand : bool, default False
+        * If True, return DataFrame.
+        * If False, return Series/Index/DataFrame.
+
+    Returns
+    -------
+    DataFrame with one row for each subject string, and one column for
+    each group. Any capture group names in regular expression pat will
+    be used for column names; otherwise capture group numbers will be
+    used. The dtype of each result column is always object, even when
+    no match is found. If expand=True and pat has only one capture group,
+    then return a Series (if subject is a Series) or Index (if subject
+    is an Index).
+
+    See Also
+    --------
+    extractall : returns all matches (not just the first match)
+
+    Examples
+    --------
+    A pattern with two groups will return a DataFrame with two columns.
+    Non-matches will be NaN.
+
+    >>> s = Series(['a1', 'b2', 'c3'])
+    >>> s.str.extract('([ab])(\d)')
+         0    1
+    0    a    1
+    1    b    2
+    2  NaN  NaN
+
+    A pattern may contain optional groups.
+
+    >>> s.str.extract('([ab])?(\d)')
+         0  1
+    0    a  1
+    1    b  2
+    2  NaN  3
+
+    Named groups will become column names in the result.
+
+    >>> s.str.extract('(?P<letter>[ab])(?P<digit>\d)')
+      letter digit
+    0      a     1
+    1      b     2
+    2    NaN   NaN
+
+    A pattern with one group will return a DataFrame with one column
+    if expand=True.
+
+    >>> s.str.extract('[ab](\d)', expand=True)
+         0
+    0    1
+    1    2
+    2  NaN
+
+    A pattern with one group will return a Series if expand=False.
+
+    >>> s.str.extract('[ab](\d)', expand=False)
+    0      1
+    1      2
+    2    NaN
+    dtype: object
+
+    """
+    if expand is None:
+        warnings.warn(
+            "currently extract(expand=None) " +
+            "means expand=False (return Index/Series/DataFrame) " +
+            "but in a future version of pandas this will be changed " +
+            "to expand=True (return DataFrame)",
+            FutureWarning,
+            stacklevel=3)
+        expand = False
+    if not isinstance(expand, bool):
+        raise ValueError("expand must be True or False")
+    if expand:
+        return _str_extract_frame(arr._orig, pat, flags=flags)
+    else:
+        result, name = _str_extract_noexpand(arr._data, pat, flags=flags)
+        return arr._wrap_result(result, name=name, expand=expand)
+
+
+def str_extractall(arr, pat, flags=0):
+    """
+    For each subject string in the Series, extract groups from all
+    matches of regular expression pat. When each subject string in the
+    Series has exactly one match, extractall(pat).xs(0, level='match')
+    is the same as extract(pat).
+
+    .. versionadded:: 0.18.0
+
+    Parameters
+    ----------
+    pat : string
+        Regular expression pattern with capturing groups
+    flags : int, default 0 (no flags)
+        re module flags, e.g. re.IGNORECASE
+
+    Returns
+    -------
+    A DataFrame with one row for each match, and one column for each
+    group. Its rows have a MultiIndex with first levels that come from
+    the subject Series. The last level is named 'match' and indicates
+    the order in the subject. Any capture group names in regular
+    expression pat will be used for column names; otherwise capture
+    group numbers will be used.
+
+    See Also
+    --------
+    extract : returns first match only (not all matches)
+
+    Examples
+    --------
+    A pattern with one group will return a DataFrame with one column.
+    Indices with no matches will not appear in the result.
+
+    >>> s = Series(["a1a2", "b1", "c1"], index=["A", "B", "C"])
+    >>> s.str.extractall("[ab](\d)")
+             0
+      match
+    A 0      1
+      1      2
+    B 0      1
+
+    Capture group names are used for column names of the result.
+
+    >>> s.str.extractall("[ab](?P<digit>\d)")
+            digit
+      match
+    A 0         1
+      1         2
+    B 0         1
+
+    A pattern with two groups will return a DataFrame with two columns.
+
+    >>> s.str.extractall("(?P<letter>[ab])(?P<digit>\d)")
+            letter digit
+      match
+    A 0          a     1
+      1          a     2
+    B 0          b     1
+
+    Optional groups that do not match are NaN in the result.
+
+    >>> s.str.extractall("(?P<letter>[ab])?(?P<digit>\d)")
+            letter digit
+      match
+    A 0          a     1
+      1          a     2
+    B 0          b     1
+    C 0        NaN     1
+
+    """
+    from pandas import DataFrame, MultiIndex
+    regex = re.compile(pat, flags=flags)
+    # the regex must contain capture groups.
+    if regex.groups == 0:
+        raise ValueError("pattern contains no capture groups")
+    names = dict(zip(regex.groupindex.values(), regex.groupindex.keys()))
+    columns = [names.get(1 + i, i) for i in range(regex.groups)]
+    match_list = []
+    index_list = []
+    for subject_key, subject in arr.iteritems():
+        if isinstance(subject, compat.string_types):
+            try:
+                key_list = list(subject_key)
+            except TypeError:
+                key_list = [subject_key]
+            for match_i, match_tuple in enumerate(regex.findall(subject)):
+                na_tuple = [
+                    np.NaN if group == "" else group for group in match_tuple]
+                match_list.append(na_tuple)
+                result_key = tuple(key_list + [match_i])
+                index_list.append(result_key)
+    if 0 < len(index_list):
+        index = MultiIndex.from_tuples(
+            index_list, names=arr.index.names + ["match"])
+    else:
+        index = None
+    result = DataFrame(match_list, index, columns)
+    return result
 
 
 def str_get_dummies(arr, sep='|'):
@@ -599,6 +800,10 @@ def str_findall(arr, pat, flags=0):
     Returns
     -------
     matches : Series/Index of lists
+
+    See Also
+    --------
+    extractall : returns DataFrame with one column per capture group
     """
     regex = re.compile(pat, flags=flags)
     return _na_map(regex.findall, arr)
@@ -1087,7 +1292,10 @@ class StringMethods(NoNewAttributesMixin):
             i += 1
             g = self.get(i)
 
-    def _wrap_result(self, result, use_codes=True, name=None):
+    def _wrap_result(self, result, use_codes=True,
+                     name=None, expand=None):
+
+        from pandas.core.index import Index, MultiIndex
 
         # for category, we do the stuff on the categories, so blow it up
         # to the full series again
@@ -1097,48 +1305,42 @@ class StringMethods(NoNewAttributesMixin):
         if use_codes and self._is_categorical:
             result = take_1d(result, self._orig.cat.codes)
 
-        # leave as it is to keep extract and get_dummies results
-        # can be merged to _wrap_result_expand in v0.17
-        from pandas.core.index import Index
-
-        if not hasattr(result, 'ndim'):
+        if not hasattr(result, 'ndim') or not hasattr(result, 'dtype'):
             return result
+        assert result.ndim < 3
 
-        if result.ndim == 1:
-            # Wait until we are sure result is a Series or Index before
-            # checking attributes (GH 12180)
-            name = name or getattr(result, 'name', None) or self._orig.name
-            if isinstance(self._orig, Index):
-                # if result is a boolean np.array, return the np.array
-                # instead of wrapping it into a boolean Index (GH 8875)
-                if is_bool_dtype(result):
-                    return result
-                return Index(result, name=name)
-            return self._orig._constructor_sliced(
-                result, index=self._orig.index, name=name)
-        else:
-            assert result.ndim < 3
-            return self._orig._constructor_expanddim(
-                result, index=self._orig.index)
+        if expand is None:
+            # infer from ndim if expand is not specified
+            expand = False if result.ndim == 1 else True
 
-    def _wrap_result_expand(self, result, expand=False):
+        elif expand is True and not isinstance(self._orig, Index):
+            # required when expand=True is explicitly specified
+            # not needed when infered
+
+            def cons_row(x):
+                if is_list_like(x):
+                    return x
+                else:
+                    return [x]
+
+            result = [cons_row(x) for x in result]
+
         if not isinstance(expand, bool):
             raise ValueError("expand must be True or False")
 
-        # for category, we do the stuff on the categories, so blow it up
-        # to the full series again
-        if self._is_categorical:
-            result = take_1d(result, self._orig.cat.codes)
-
-        from pandas.core.index import Index, MultiIndex
-        if not hasattr(result, 'ndim'):
-            return result
-
-        if isinstance(self._orig, Index):
+        if name is None:
             name = getattr(result, 'name', None)
+        if name is None:
+            # do not use logical or, _orig may be a DataFrame
+            # which has "name" column
+            name = self._orig.name
+
+        # Wait until we are sure result is a Series or Index before
+        # checking attributes (GH 12180)
+        if isinstance(self._orig, Index):
             # if result is a boolean np.array, return the np.array
             # instead of wrapping it into a boolean Index (GH 8875)
-            if hasattr(result, 'dtype') and is_bool_dtype(result):
+            if is_bool_dtype(result):
                 return result
 
             if expand:
@@ -1149,18 +1351,10 @@ class StringMethods(NoNewAttributesMixin):
         else:
             index = self._orig.index
             if expand:
-
-                def cons_row(x):
-                    if is_list_like(x):
-                        return x
-                    else:
-                        return [x]
-
                 cons = self._orig._constructor_expanddim
-                data = [cons_row(x) for x in result]
-                return cons(data, index=index)
+                return cons(result, index=index)
             else:
-                name = getattr(result, 'name', None)
+                # Must a Series
                 cons = self._orig._constructor
                 return cons(result, name=name, index=index)
 
@@ -1175,12 +1369,12 @@ class StringMethods(NoNewAttributesMixin):
     @copy(str_split)
     def split(self, pat=None, n=-1, expand=False):
         result = str_split(self._data, pat, n=n)
-        return self._wrap_result_expand(result, expand=expand)
+        return self._wrap_result(result, expand=expand)
 
     @copy(str_rsplit)
     def rsplit(self, pat=None, n=-1, expand=False):
         result = str_rsplit(self._data, pat, n=n)
-        return self._wrap_result_expand(result, expand=expand)
+        return self._wrap_result(result, expand=expand)
 
     _shared_docs['str_partition'] = ("""
     Split the string at the %(side)s occurrence of `sep`, and return 3 elements
@@ -1235,7 +1429,7 @@ class StringMethods(NoNewAttributesMixin):
     def partition(self, pat=' ', expand=True):
         f = lambda x: x.partition(pat)
         result = _na_map(f, self._data)
-        return self._wrap_result_expand(result, expand=expand)
+        return self._wrap_result(result, expand=expand)
 
     @Appender(_shared_docs['str_partition'] % {
         'side': 'last',
@@ -1246,7 +1440,7 @@ class StringMethods(NoNewAttributesMixin):
     def rpartition(self, pat=' ', expand=True):
         f = lambda x: x.rpartition(pat)
         result = _na_map(f, self._data)
-        return self._wrap_result_expand(result, expand=expand)
+        return self._wrap_result(result, expand=expand)
 
     @copy(str_get)
     def get(self, i):
@@ -1392,7 +1586,8 @@ class StringMethods(NoNewAttributesMixin):
         # methods available for making the dummies...
         data = self._orig.astype(str) if self._is_categorical else self._data
         result = str_get_dummies(data, sep)
-        return self._wrap_result(result, use_codes=(not self._is_categorical))
+        return self._wrap_result(result, use_codes=(not self._is_categorical),
+                                 expand=True)
 
     @copy(str_translate)
     def translate(self, table, deletechars=None):
@@ -1405,9 +1600,12 @@ class StringMethods(NoNewAttributesMixin):
     findall = _pat_wrapper(str_findall, flags=True)
 
     @copy(str_extract)
-    def extract(self, pat, flags=0):
-        result, name = str_extract(self._data, pat, flags=flags)
-        return self._wrap_result(result, name=name)
+    def extract(self, pat, flags=0, expand=None):
+        return str_extract(self, pat, flags=flags, expand=expand)
+
+    @copy(str_extractall)
+    def extractall(self, pat, flags=0):
+        return str_extractall(self._orig, pat, flags=flags)
 
     _shared_docs['find'] = ("""
     Return %(side)s indexes in each strings in the Series/Index

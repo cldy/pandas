@@ -53,12 +53,6 @@ class TestMatch(tm.TestCase):
 class TestFactorize(tm.TestCase):
     _multiprocess_can_split_ = True
 
-    def test_warn(self):
-
-        s = Series([1, 2, 3])
-        with tm.assert_produces_warning(FutureWarning):
-            algos.factorize(s, order='A')
-
     def test_basic(self):
 
         labels, uniques = algos.factorize(['a', 'b', 'b', 'a', 'a', 'c', 'c',
@@ -148,6 +142,20 @@ class TestFactorize(tm.TestCase):
         self.assert_numpy_array_equal(labels, np.array(
             [0, 0, 0, 1, 1, 0], dtype=np.int64))
         self.assert_numpy_array_equal(uniques, pd.PeriodIndex([v1, v2]))
+
+        # GH 5986
+        v1 = pd.to_timedelta('1 day 1 min')
+        v2 = pd.to_timedelta('1 day')
+        x = Series([v1, v2, v1, v1, v2, v2, v1])
+        labels, uniques = algos.factorize(x)
+        self.assert_numpy_array_equal(labels, np.array(
+            [0, 1, 0, 0, 1, 1, 0], dtype=np.int64))
+        self.assert_numpy_array_equal(uniques, pd.to_timedelta([v1, v2]))
+
+        labels, uniques = algos.factorize(x, sort=True)
+        self.assert_numpy_array_equal(labels, np.array(
+            [1, 0, 1, 1, 0, 0, 1], dtype=np.int64))
+        self.assert_numpy_array_equal(uniques, pd.to_timedelta([v2, v1]))
 
     def test_factorize_nan(self):
         # nan should map to na_sentinel, not reverse_indexer[na_sentinel]
@@ -512,6 +520,22 @@ class TestValueCounts(tm.TestCase):
             tm.assert_series_equal(
                 pd.Series([10.3, 5., 5., None]).value_counts(dropna=False),
                 pd.Series([2, 1, 1], index=[5., 10.3, np.nan]))
+
+    def test_value_counts_normalized(self):
+        # GH12558
+        s = Series([1, 2, np.nan, np.nan, np.nan])
+        dtypes = (np.float64, np.object, 'M8[ns]')
+        for t in dtypes:
+            s_typed = s.astype(t)
+            result = s_typed.value_counts(normalize=True, dropna=False)
+            expected = Series([0.6, 0.2, 0.2],
+                              index=Series([np.nan, 2.0, 1.0], dtype=t))
+            tm.assert_series_equal(result, expected)
+
+            result = s_typed.value_counts(normalize=True, dropna=True)
+            expected = Series([0.5, 0.5],
+                              index=Series([2.0, 1.0], dtype=t))
+            tm.assert_series_equal(result, expected)
 
 
 class GroupVarTestMixin(object):

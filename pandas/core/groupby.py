@@ -11,7 +11,7 @@ from pandas.compat import(
     callable, map
 )
 from pandas import compat
-
+from pandas.compat.numpy_compat import _np_version_under1p8
 from pandas.core.base import (PandasObject, SelectionMixin, GroupByError,
                               DataError, SpecificationError)
 from pandas.core.categorical import Categorical
@@ -31,7 +31,8 @@ from pandas.core.common import(_possibly_downcast_to_dtype, isnull,
                                is_timedelta64_dtype, is_datetime64_dtype,
                                is_categorical_dtype, _values_from_object,
                                is_datetime_or_timedelta_dtype, is_bool,
-                               is_bool_dtype, AbstractMethodError)
+                               is_bool_dtype, AbstractMethodError,
+                               _maybe_fill)
 from pandas.core.config import option_context
 import pandas.lib as lib
 from pandas.lib import Timestamp
@@ -333,11 +334,10 @@ class _GroupBy(PandasObject, SelectionMixin):
             if axis != 0:
                 raise ValueError('as_index=False only valid for axis=0')
 
-        self.input_constructor = obj._constructor
-        self.input_constructor_sliced = obj._constructor_sliced
-        self.input_lenshape = len(obj.shape)
-        if self.input_lenshape == 1:
-            self.input_constructor_expanddim = obj._constructor_expanddim
+        self.inputconstructor = obj._constructor
+        self.inputconstructor_sliced = obj._constructor_sliced
+        self.inputconstructor_expanddim = obj._constructor_expanddim
+        self.lenshape = obj.ndim
         self.as_index = as_index
         self.keys = keys
         self.sort = sort
@@ -383,6 +383,38 @@ class _GroupBy(PandasObject, SelectionMixin):
         """ dict {group name -> group indices} """
         self._assure_grouper()
         return self.grouper.indices
+
+    @property
+    def inputconstructor(self):
+        return self._inputconstructor
+
+    @inputconstructor.setter
+    def inputconstructor(self, constructor):
+        self._inputconstructor = constructor
+
+    @property
+    def inputconstructor_sliced(self):
+        return self._inputconstructor_sliced
+
+    @inputconstructor_sliced.setter
+    def inputconstructor_sliced(self, constructor):
+        self._inputconstructor_sliced = constructor
+
+    @property
+    def inputconstructor_expanddim(self):
+        return self._inputconstructor_expanddim
+
+    @inputconstructor_expanddim.setter
+    def inputconstructor_expanddim(self, constructor):
+        self._inputconstructor_expanddim = constructor
+
+    @property
+    def lenshape(self):
+        return self._lenshape
+
+    @lenshape.setter
+    def lenshape(self, lenshape_in):
+        self._lenshape = lenshape_in
 
     def _get_indices(self, names):
         """
@@ -716,7 +748,7 @@ class _GroupBy(PandasObject, SelectionMixin):
         else:
             dtype = obj.dtype
 
-        if not np.isscalar(result):
+        if not lib.isscalar(result):
             result = _possibly_downcast_to_dtype(result, dtype)
 
         return result
@@ -1048,27 +1080,71 @@ class GroupBy(_GroupBy):
 
     @Substitution(name='groupby')
     @Appender(_doc_template)
-    def resample(self, rule, **kwargs):
+    def resample(self, rule, how=None, fill_method=None, limit=None, **kwargs):
         """
         Provide resampling when using a TimeGrouper
         Return a new grouper with our resampler appended
         """
-        from pandas.tseries.resample import TimeGrouper
+        from pandas.tseries.resample import (TimeGrouper,
+                                             _maybe_process_deprecations)
         gpr = TimeGrouper(axis=self.axis, freq=rule, **kwargs)
 
         # we by definition have at least 1 key as we are already a grouper
         groupings = list(self.grouper.groupings)
         groupings.append(gpr)
 
-        return self.__class__(self.obj,
-                              keys=groupings,
-                              axis=self.axis,
-                              level=self.level,
-                              as_index=self.as_index,
-                              sort=self.sort,
-                              group_keys=self.group_keys,
-                              squeeze=self.squeeze,
-                              selection=self._selection)
+        result = self.__class__(self.obj,
+                                keys=groupings,
+                                axis=self.axis,
+                                level=self.level,
+                                as_index=self.as_index,
+                                sort=self.sort,
+                                group_keys=self.group_keys,
+                                squeeze=self.squeeze,
+                                selection=self._selection)
+
+        return _maybe_process_deprecations(result,
+                                           how=how,
+                                           fill_method=fill_method,
+                                           limit=limit)
+
+    @Substitution(name='groupby')
+    @Appender(_doc_template)
+    def pad(self, limit=None):
+        """
+        Forward fill the values
+
+        Parameters
+        ----------
+        limit : integer, optional
+            limit of how many values to fill
+
+        See Also
+        --------
+        Series.fillna
+        DataFrame.fillna
+        """
+        return self.apply(lambda x: x.ffill(limit=limit))
+    ffill = pad
+
+    @Substitution(name='groupby')
+    @Appender(_doc_template)
+    def backfill(self, limit=None):
+        """
+        Backward fill the values
+
+        Parameters
+        ----------
+        limit : integer, optional
+            limit of how many values to fill
+
+        See Also
+        --------
+        Series.fillna
+        DataFrame.fillna
+        """
+        return self.apply(lambda x: x.bfill(limit=limit))
+    bfill = backfill
 
     @Substitution(name='groupby')
     @Appender(_doc_template)
@@ -1267,7 +1343,7 @@ class GroupBy(_GroupBy):
 
         index = self._selected_obj.index
         cumcounts = self._cumcount_array(ascending=ascending)
-        return self.input_constructor_sliced(cumcounts, index)
+        return self.inputconstructor_sliced(cumcounts, index)
 
     @Substitution(name='groupby')
     @Appender(_doc_template)
@@ -1730,14 +1806,15 @@ class BaseGrouper(object):
         labels, _, _ = self.group_info
 
         if kind == 'aggregate':
-            result = np.empty(out_shape, dtype=out_dtype)
-            result.fill(np.nan)
+            result = _maybe_fill(np.empty(out_shape, dtype=out_dtype),
+                                 fill_value=np.nan)
             counts = np.zeros(self.ngroups, dtype=np.int64)
             result = self._aggregate(
                 result, counts, values, labels, func, is_numeric)
         elif kind == 'transform':
-            result = np.empty_like(values, dtype=out_dtype)
-            result.fill(np.nan)
+            result = _maybe_fill(np.empty_like(values, dtype=out_dtype),
+                                 fill_value=np.nan)
+
             # temporary storange for running-total type tranforms
             accum = np.empty(out_shape, dtype=out_dtype)
             result = self._transform(
@@ -2387,7 +2464,8 @@ def _get_grouper(obj, key=None, axis=0, level=None, sort=True):
 
 
 def _is_label_like(val):
-    return isinstance(val, compat.string_types) or np.isscalar(val)
+    return (isinstance(val, compat.string_types) or
+            (val is not None and lib.isscalar(val)))
 
 
 def _convert_grouper(axis, grouper):
@@ -2531,7 +2609,8 @@ class SeriesGroupBy(GroupBy):
             return getattr(self, func_or_funcs)(*args, **kwargs)
 
         if hasattr(func_or_funcs, '__iter__'):
-            ret = self._aggregate_multiple_funcs(func_or_funcs, _level)
+            ret = self._aggregate_multiple_funcs(func_or_funcs,
+                                                 (_level or 0) + 1)
         else:
             cyfunc = self._is_cython_func(func_or_funcs)
             if cyfunc and not args and not kwargs:
@@ -2546,11 +2625,15 @@ class SeriesGroupBy(GroupBy):
                 result = self._aggregate_named(func_or_funcs, *args, **kwargs)
 
             index = Index(sorted(result), name=self.grouper.names[0])
-            ret = self.input_constructor(result, index=index)
+            ret = self.inputconstructor(result, index=index)
 
         if not self.as_index:  # pragma: no cover
             print('Warning, ignoring as_index=True')
 
+        # _level handled at higher
+        if not _level and isinstance(ret, dict):
+            from pandas import concat
+            ret = concat(ret, axis=1)
         return ret
 
     agg = aggregate
@@ -2576,14 +2659,6 @@ class SeriesGroupBy(GroupBy):
                     columns.append(com._get_callable_name(f))
             arg = lzip(columns, arg)
 
-        # for a ndim=1, disallow a nested dict for an aggregator as
-        # this is a mis-specification of the aggregations, via a
-        # specificiation error
-        # e.g. g['A'].agg({'A': ..., 'B': ...})
-        if self.name in columns and len(columns) > 1:
-            raise SpecificationError('invalid aggregation names specified '
-                                     'for selected objects')
-
         results = {}
         for name, func in arg:
             obj = self
@@ -2607,23 +2682,23 @@ class SeriesGroupBy(GroupBy):
                 return results
             return list(compat.itervalues(results))[0]
 
-        if self.input_lenshape == 2:
-            return self.input_constructor(results, columns=columns)
-        elif self.input_lenshape == 1:
-            return self.input_constructor_expanddim(results, columns=columns)
+        if self.lenshape == 2:
+            return self.inputconstructor(results, columns=columns)
+        elif self.lenshape == 1:
+            return self.inputconstructor_expanddim(results, columns=columns)
 
     def _wrap_output(self, output, index, names=None):
         """ common agg/transform wrapping logic """
         output = output[self.name]
 
         if names is not None:
-            return self.input_constructor_expanddim(
+            return self.inputconstructor_expanddim(
                 output, index=index, columns=names)
         else:
             name = self.name
             if name is None:
                 name = self._selected_obj.name
-            return self.input_constructor(
+            return self.inputconstructor(
                 output, index=index, name=name)
 
     def _wrap_aggregated_output(self, output, names=None):
@@ -2831,10 +2906,15 @@ class SeriesGroupBy(GroupBy):
             inc[idx] = 1
 
         out = np.add.reduceat(inc, idx).astype('int64', copy=False)
-        return self.input_constructor_sliced(
-            out if ids[0] != -1 else out[1:],
-            index=self.grouper.result_index,
-            name=self.name)
+        res = out if ids[0] != -1 else out[1:]
+        ri = self.grouper.result_index
+
+        # we might have duplications among the bins
+        if len(res) != len(ri):
+            res, out = np.zeros(len(ri), dtype=out.dtype), res
+            res[ids] = out
+
+        return self.inputconstructor_sliced(res, index=ri, name=self.name)
 
     @deprecate_kwarg('take_last', 'keep',
                      mapping={True: 'last', False: 'first'})
@@ -2909,8 +2989,18 @@ class SeriesGroupBy(GroupBy):
 
         if normalize:
             out = out.astype('float')
-            acc = rep(np.diff(np.r_[idx, len(ids)]))
-            out /= acc[mask] if dropna else acc
+            d = np.diff(np.r_[idx, len(ids)])
+            if dropna:
+                m = ids[lab == -1]
+                if _np_version_under1p8:
+                    mi, ml = algos.factorize(m)
+                    d[ml] = d[ml] - np.bincount(mi)
+                else:
+                    np.add.at(d, m, -1)
+                acc = rep(d)[mask]
+            else:
+                acc = rep(d)
+            out /= acc
 
         if sort and bins is None:
             cat = ids[inc][mask] if dropna else ids[inc]
@@ -2965,7 +3055,7 @@ class SeriesGroupBy(GroupBy):
         ids = com._ensure_platform_int(ids)
         out = np.bincount(ids[mask], minlength=ngroups or None)
 
-        return self.input_constructor_sliced(
+        return self.inputconstructor_sliced(
             out, index=self.grouper.result_index,
             name=self.name, dtype='int64')
 
@@ -3081,8 +3171,8 @@ class NDFrameGroupBy(GroupBy):
                         result.columns.levels[0],
                         name=self._selected_obj.columns.name)
                 except:
-                    if self.input_lenshape == 2:
-                        result = self.input_constructor(
+                    if self.lenshape == 2:
+                        result = self.inputconstructor(
                             self._aggregate_generic(arg, *args, **kwargs))
                     else:
                         result = self._aggregate_generic(arg, *args, **kwargs)
@@ -3354,9 +3444,9 @@ class NDFrameGroupBy(GroupBy):
                     path, res = self._choose_path(fast_path, slow_path, group)
                 except TypeError:
                     return self._transform_item_by_item(obj, fast_path)
-                except Exception:  # pragma: no cover
-                    res = fast_path(group)
-                    path = fast_path
+                except ValueError:
+                    msg = 'transform must return a scalar value for each group'
+                    raise ValueError(msg)
             else:
                 res = path(group)
 
@@ -3652,7 +3742,7 @@ class DataFrameGroupBy(NDFrameGroupBy):
         if self.axis == 1:
             result = result.T
 
-        return self.input_constructor(
+        return self.inputconstructor(
             self._reindex_output(result)._convert(datetime=True))
 
     def _reindex_output(self, result):

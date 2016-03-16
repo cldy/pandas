@@ -68,6 +68,7 @@ def show_versions(as_json=False):
         ("numpy", lambda mod: mod.version.version),
         ("scipy", lambda mod: mod.version.version),
         ("statsmodels", lambda mod: mod.__version__),
+        ("xarray", lambda mod: mod.__version__),
         ("IPython", lambda mod: mod.__version__),
         ("sphinx", lambda mod: mod.__version__),
         ("patsy", lambda mod: mod.__version__),
@@ -90,7 +91,8 @@ def show_versions(as_json=False):
         ("sqlalchemy", lambda mod: mod.__version__),
         ("pymysql", lambda mod: mod.__version__),
         ("psycopg2", lambda mod: mod.__version__),
-        ("jinja2", lambda mod: mod.__version__)
+        ("jinja2", lambda mod: mod.__version__),
+        ("boto", lambda mod: mod.__version__)
     ]
 
     deps_blob = list()

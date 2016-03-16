@@ -36,6 +36,7 @@ import types
 from unicodedata import east_asian_width
 import struct
 import inspect
+from collections import namedtuple
 
 PY2 = sys.version_info[0] == 2
 PY3 = (sys.version_info[0] >= 3)
@@ -70,8 +71,32 @@ if PY3:
     def bytes_to_str(b, encoding=None):
         return b.decode(encoding or 'utf-8')
 
+    # The signature version below is directly copied from Django,
+    # https://github.com/django/django/pull/4846
     def signature(f):
-        return list(inspect.signature(f).parameters.keys())
+        sig = inspect.signature(f)
+        args = [
+            p.name for p in sig.parameters.values()
+            if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+            ]
+        varargs = [
+            p.name for p in sig.parameters.values()
+            if p.kind == inspect.Parameter.VAR_POSITIONAL
+            ]
+        varargs = varargs[0] if varargs else None
+        keywords = [
+            p.name for p in sig.parameters.values()
+            if p.kind == inspect.Parameter.VAR_KEYWORD
+            ]
+        keywords = keywords[0] if keywords else None
+        defaults = [
+            p.default for p in sig.parameters.values()
+            if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+            and p.default is not p.empty
+            ] or None
+        argspec = namedtuple('Signature',['args','defaults',
+                                'varargs','keywords'])
+        return argspec(args,defaults,varargs,keywords)
 
     # have to explicitly put builtins into the namespace
     range = range
@@ -110,7 +135,7 @@ else:
         return b
 
     def signature(f):
-        return inspect.getargspec(f).args
+        return inspect.getargspec(f)
 
     # import iterator versions of these functions
     range = xrange
@@ -128,31 +153,28 @@ else:
     lfilter = builtins.filter
 
 
-def iteritems(obj, **kwargs):
-    """replacement for six's iteritems for Python2/3 compat
-       uses 'iteritems' if available and otherwise uses 'items'.
+if PY2:
+    def iteritems(obj, **kw):
+        return obj.iteritems(**kw)
 
-       Passes kwargs to method.
-    """
-    func = getattr(obj, "iteritems", None)
-    if not func:
-        func = obj.items
-    return func(**kwargs)
+    def iterkeys(obj, **kw):
+        return obj.iterkeys(**kw)
 
+    def itervalues(obj, **kw):
+        return obj.itervalues(**kw)
 
-def iterkeys(obj, **kwargs):
-    func = getattr(obj, "iterkeys", None)
-    if not func:
-        func = obj.keys
-    return func(**kwargs)
+    next = lambda it : it.next()
+else:
+    def iteritems(obj, **kw):
+        return iter(obj.items(**kw))
 
+    def iterkeys(obj, **kw):
+        return iter(obj.keys(**kw))
 
-def itervalues(obj, **kwargs):
-    func = getattr(obj, "itervalues", None)
-    if not func:
-        func = obj.values
-    return func(**kwargs)
+    def itervalues(obj, **kw):
+        return iter(obj.values(**kw))
 
+    next = next
 
 def bind_method(cls, name, func):
     """Bind a method to class, python 2 and python 3 compatible.
@@ -303,6 +325,10 @@ if LooseVersion(dateutil.__version__) < '2.0':
     def parse_date(timestr, *args, **kwargs):
         timestr = bytes(timestr)
         return _date_parser.parse(timestr, *args, **kwargs)
+elif PY2 and LooseVersion(dateutil.__version__) == '2.0':
+    # dateutil brokenness
+    raise Exception('dateutil 2.0 incompatible with Python 2.x, you must '
+                    'install version 1.5 or 2.1+!')
 else:
     parse_date = _date_parser.parse
 

@@ -10,6 +10,7 @@ import sys
 import re
 import nose
 import platform
+from distutils.version import LooseVersion
 
 from multiprocessing.pool import ThreadPool
 
@@ -29,6 +30,7 @@ from pandas.io.parsers import (read_csv, read_table, read_fwf,
 import pandas.util.testing as tm
 import pandas as pd
 
+from pandas.core.common import AbstractMethodError
 from pandas.compat import parse_date
 import pandas.lib as lib
 from pandas import compat
@@ -1047,12 +1049,20 @@ c,4,5
                         'C': [2, 4, 5]}, idx)
         tm.assert_frame_equal(rs, xp)
 
-    def test_yy_format(self):
+    def test_yy_format_with_yearfirst(self):
         data = """date,time,B,C
 090131,0010,1,2
 090228,1020,3,4
 090331,0830,5,6
 """
+
+        # https://github.com/dateutil/dateutil/issues/217
+        import dateutil
+        if dateutil.__version__ >= LooseVersion('2.5.0'):
+            raise nose.SkipTest("testing yearfirst=True not-support"
+                                "on datetutil < 2.5.0 this works but"
+                                "is wrong")
+
         rs = self.read_csv(StringIO(data), index_col=0,
                            parse_dates=[['date', 'time']])
         idx = DatetimeIndex([datetime(2009, 1, 31, 0, 10, 0),
@@ -2495,6 +2505,18 @@ MyColumn
         expected = pd.DataFrame([[float(s) for s in data.split(',')]])
         tm.assert_frame_equal(result, expected)
 
+    def float_precision_choices(self):
+        raise AbstractMethodError(self)
+
+    def test_scientific_no_exponent(self):
+        # See PR 12215
+        df = DataFrame.from_items([('w', ['2e']), ('x', ['3E']),
+                                   ('y', ['42e']), ('z', ['632E'])])
+        data = df.to_csv(index=False)
+        for prec in self.float_precision_choices():
+            df_roundtrip = self.read_csv(StringIO(data), float_precision=prec)
+            tm.assert_frame_equal(df_roundtrip, df)
+
     def test_int64_overflow(self):
         data = """ID
 00013007854817840016671868
@@ -2622,6 +2644,26 @@ MyColumn
         self.assertRaises(Exception, self.read_csv,
                           StringIO(data), escapechar='\\')
 
+    def test_grow_boundary_at_cap(self):
+        # See gh-12494
+        #
+        # Cause of error was the fact that pandas
+        # was not increasing the buffer size when
+        # the desired space would fill the buffer
+        # to capacity, which later would cause a
+        # buffer overflow error when checking the
+        # EOF terminator of the CSV stream
+        def test_empty_header_read(count):
+            s = StringIO(',' * count)
+            expected = DataFrame(columns=[
+                'Unnamed: {i}'.format(i=i)
+                for i in range(count + 1)])
+            df = read_csv(s)
+            tm.assert_frame_equal(df, expected)
+
+        for count in range(1, 101):
+            test_empty_header_read(count)
+
 
 class TestPythonParser(ParserTests, tm.TestCase):
 
@@ -2650,6 +2692,9 @@ class TestPythonParser(ParserTests, tm.TestCase):
         kwds = kwds.copy()
         kwds['engine'] = 'python'
         return read_table(*args, **kwds)
+
+    def float_precision_choices(self):
+        return [None]
 
     def test_sniff_delimiter(self):
         text = """index|A|B|C
@@ -3408,6 +3453,9 @@ col1~~~~~col2  col3++++++++++++++++++col4
 
 class CParserTests(ParserTests):
     """ base class for CParser Testsing """
+
+    def float_precision_choices(self):
+        return [None, 'high', 'round_trip']
 
     def test_buffer_overflow(self):
         # GH9205

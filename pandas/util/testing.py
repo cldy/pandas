@@ -31,6 +31,7 @@ from pandas.core.common import (is_sequence, array_equivalent, is_list_like, is_
                                 needs_i8_conversion)
 
 import pandas.compat as compat
+import pandas.lib as lib
 from pandas.compat import(
     filter, map, zip, range, unichr, lrange, lmap, lzip, u, callable, Counter,
     raise_with_traceback, httplib, is_platform_windows, is_platform_32bit
@@ -102,9 +103,21 @@ class TestCase(unittest.TestCase):
         return deprecate('assertNotAlmostEquals', self.assertNotAlmostEqual)(*args, **kwargs)
 
 
-# NOTE: don't pass an NDFrame or index to this function - may not handle it
-# well.
-assert_almost_equal = _testing.assert_almost_equal
+def assert_almost_equal(left, right, check_exact=False, **kwargs):
+    if isinstance(left, pd.Index):
+        return assert_index_equal(left, right, check_exact=check_exact,
+                                  **kwargs)
+
+    elif isinstance(left, pd.Series):
+        return assert_series_equal(left, right, check_exact=check_exact,
+                                   **kwargs)
+
+    elif isinstance(left, pd.DataFrame):
+        return assert_frame_equal(left, right, check_exact=check_exact,
+                                  **kwargs)
+
+    return _testing.assert_almost_equal(left, right, **kwargs)
+
 
 assert_dict_equal = _testing.assert_dict_equal
 
@@ -120,7 +133,7 @@ RANDU_CHARS = np.array(list(u("").join(map(unichr, lrange(1488, 1488 + 26))) +
 
 def rands_array(nchars, size, dtype='O'):
     """Generate an array of byte strings."""
-    retval = (choice(RANDS_CHARS, size=nchars * np.prod(size))
+    retval = (np.random.choice(RANDS_CHARS, size=nchars * np.prod(size))
               .view((np.str_, nchars)).reshape(size))
     if dtype is None:
         return retval
@@ -130,7 +143,7 @@ def rands_array(nchars, size, dtype='O'):
 
 def randu_array(nchars, size, dtype='O'):
     """Generate an array of unicode strings."""
-    retval = (choice(RANDU_CHARS, size=nchars * np.prod(size))
+    retval = (np.random.choice(RANDU_CHARS, size=nchars * np.prod(size))
               .view((np.unicode_, nchars)).reshape(size))
     if dtype is None:
         return retval
@@ -145,7 +158,7 @@ def rands(nchars):
     See `rands_array` if you want to create an array of random strings.
 
     """
-    return ''.join(choice(RANDS_CHARS, nchars))
+    return ''.join(np.random.choice(RANDS_CHARS, nchars))
 
 
 def randu(nchars):
@@ -156,14 +169,6 @@ def randu(nchars):
 
     """
     return ''.join(choice(RANDU_CHARS, nchars))
-
-
-def choice(x, size=10):
-    """sample with replacement; uniform over the input"""
-    try:
-        return np.random.choice(x, size=size)
-    except AttributeError:
-        return np.random.randint(len(x), size=size).choose(x)
 
 
 def close(fignum=None):
@@ -196,6 +201,12 @@ def mplskip(cls):
     cls.setUpClass = setUpClass
     return cls
 
+def _skip_if_no_mpl():
+    try:
+        import matplotlib
+    except ImportError:
+        import nose
+        raise nose.SkipTest("matplotlib not installed")
 
 def _skip_if_mpl_1_5():
     import matplotlib
@@ -203,7 +214,6 @@ def _skip_if_mpl_1_5():
     if v > LooseVersion('1.4.3') or v[0] == '0':
         import nose
         raise nose.SkipTest("matplotlib 1.5")
-
 
 def _skip_if_no_scipy():
     try:
@@ -223,6 +233,18 @@ def _skip_if_scipy_0_17():
     if v >= LooseVersion("0.17.0"):
         import nose
         raise nose.SkipTest("scipy 0.17")
+
+def _skip_if_no_xarray():
+    try:
+        import xarray
+    except ImportError:
+        import nose
+        raise nose.SkipTest("xarray not installed")
+
+    v = xarray.__version__
+    if v < LooseVersion('0.7.0'):
+        import nose
+        raise nose.SkipTest("xarray not version is too low: {0}".format(v))
 
 def _skip_if_no_pytz():
     try:
@@ -249,14 +271,6 @@ def _skip_if_windows():
     if is_platform_windows():
         import nose
         raise nose.SkipTest("Running on Windows")
-
-
-def _skip_if_no_cday():
-    from pandas.core.datetools import cday
-    if cday is None:
-        import nose
-        raise nose.SkipTest("CustomBusinessDay not available.")
-
 
 def _skip_if_no_pathlib():
     try:
@@ -710,9 +724,9 @@ def assert_index_equal(left, right, exact='equiv', check_names=True,
             msg = '{0} values are different ({1} %)'.format(obj, np.round(diff, 5))
             raise_assert_detail(obj, msg, left, right)
     else:
-        assert_almost_equal(left.values, right.values,
-                            check_less_precise=check_less_precise,
-                            obj=obj, lobj=left, robj=right)
+        _testing.assert_almost_equal(left.values, right.values,
+                                     check_less_precise=check_less_precise,
+                                     obj=obj, lobj=left, robj=right)
 
     # metadata comparison
     if check_names:
@@ -758,11 +772,29 @@ def assert_attr_equal(attr, left, right, obj='Attributes'):
                         left_attr, right_attr)
 
 
+def assert_is_valid_plot_return_object(objs):
+    import matplotlib.pyplot as plt
+    if isinstance(objs, np.ndarray):
+        for el in objs.flat:
+            assert isinstance(el, plt.Axes), ('one of \'objs\' is not a '
+                                              'matplotlib Axes instance, '
+                                              'type encountered {0!r}'
+                                              ''.format(el.__class__.__name__))
+    else:
+        assert isinstance(objs, (plt.Artist, tuple, dict)), \
+            ('objs is neither an ndarray of Artist instances nor a '
+             'single Artist instance, tuple, or dict, "objs" is a {0!r} '
+             ''.format(objs.__class__.__name__))
+
+
 def isiterable(obj):
     return hasattr(obj, '__iter__')
 
 def is_sorted(seq):
-    return assert_almost_equal(seq, np.sort(np.array(seq)))
+    if isinstance(seq, (Index, Series)):
+        seq = seq.values
+    # sorting does not change precisions
+    return assert_numpy_array_equal(seq, np.sort(np.array(seq)))
 
 
 def assertIs(first, second, msg=''):
@@ -861,12 +893,12 @@ def assert_numpy_array_equal(left, right,
 
     # compare shape and values
     if array_equivalent(left, right, strict_nan=strict_nan):
-        return
+        return True
 
     if err_msg is None:
         # show detailed error
 
-        if np.isscalar(left) and np.isscalar(right):
+        if lib.isscalar(left) and lib.isscalar(right):
             # show scalar comparison error
             assert_equal(left, right)
         elif is_list_like(left) and is_list_like(right):
@@ -961,19 +993,23 @@ def assert_series_equal(left, right, check_dtype=True,
                                  obj='{0}'.format(obj))
     elif check_datetimelike_compat:
         # we want to check only if we have compat dtypes
-        # e.g. integer and M|m are NOT compat, but we can simply check the values in that case
-        if is_datetimelike_v_numeric(left, right) or is_datetimelike_v_object(left, right) or needs_i8_conversion(left) or needs_i8_conversion(right):
+        # e.g. integer and M|m are NOT compat, but we can simply check
+        # the values in that case
+        if (is_datetimelike_v_numeric(left, right) or
+            is_datetimelike_v_object(left, right) or
+            needs_i8_conversion(left) or
+            needs_i8_conversion(right)):
 
-            # datetimelike may have different objects (e.g. datetime.datetime vs Timestamp) but will compare equal
+            # datetimelike may have different objects (e.g. datetime.datetime
+            # vs Timestamp) but will compare equal
             if not Index(left.values).equals(Index(right.values)):
-                raise AssertionError(
-                    '[datetimelike_compat=True] {0} is not equal to {1}.'.format(left.values,
-                                                                                 right.values))
+                msg = '[datetimelike_compat=True] {0} is not equal to {1}.'
+                raise AssertionError(msg.format(left.values, right.values))
         else:
             assert_numpy_array_equal(left.values, right.values)
     else:
-        assert_almost_equal(left.get_values(), right.get_values(),
-                            check_less_precise, obj='{0}'.format(obj))
+        _testing.assert_almost_equal(left.get_values(), right.get_values(),
+                                     check_less_precise, obj='{0}'.format(obj))
 
     # metadata comparison
     if check_names:

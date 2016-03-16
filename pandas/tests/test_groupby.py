@@ -968,10 +968,13 @@ class TestGroupBy(tm.TestCase):
 
         # GH5782
         # odd comparisons can result here, so cast to make easy
-        assert_almost_equal(
-            result.xs('foo'), np.array([foo] * K).astype('float64'))
-        assert_almost_equal(
-            result.xs('bar'), np.array([bar] * K).astype('float64'))
+        exp = pd.Series(np.array([foo] * K), index=list('BCD'),
+                        dtype=np.float64, name='foo')
+        tm.assert_series_equal(result.xs('foo'), exp)
+
+        exp = pd.Series(np.array([bar] * K), index=list('BCD'),
+                        dtype=np.float64, name='bar')
+        tm.assert_almost_equal(result.xs('bar'), exp)
 
         def aggfun(ser):
             return ser.size
@@ -1398,7 +1401,8 @@ class TestGroupBy(tm.TestCase):
         for name, group in grouped:
             mean = group.mean()
             for idx in group.index:
-                assert_almost_equal(transformed.xs(idx), mean)
+                tm.assert_series_equal(transformed.xs(idx), mean,
+                                       check_names=False)
 
         # iterate
         for weekday, group in grouped:
@@ -1536,6 +1540,34 @@ class TestGroupBy(tm.TestCase):
                                                     ['D', 'C']])
         assert_frame_equal(result, expected, check_like=True)
 
+    def test_agg_compat(self):
+
+        # GH 12334
+
+        df = DataFrame({'A': ['foo', 'bar', 'foo', 'bar',
+                              'foo', 'bar', 'foo', 'foo'],
+                        'B': ['one', 'one', 'two', 'two',
+                              'two', 'two', 'one', 'two'],
+                        'C': np.random.randn(8) + 1.0,
+                        'D': np.arange(8)})
+
+        g = df.groupby(['A', 'B'])
+
+        expected = pd.concat([g['D'].sum(),
+                              g['D'].std()],
+                             axis=1)
+        expected.columns = MultiIndex.from_tuples([('C', 'sum'),
+                                                   ('C', 'std')])
+        result = g['D'].agg({'C': ['sum', 'std']})
+        assert_frame_equal(result, expected, check_like=True)
+
+        expected = pd.concat([g['D'].sum(),
+                              g['D'].std()],
+                             axis=1)
+        expected.columns = ['C', 'D']
+        result = g['D'].agg({'C': 'sum', 'D': 'std'})
+        assert_frame_equal(result, expected, check_like=True)
+
     def test_agg_nested_dicts(self):
 
         # API change for disallowing these types of nested dicts
@@ -1560,6 +1592,13 @@ class TestGroupBy(tm.TestCase):
                               g['D'].std()], axis=1)
         expected.columns = pd.MultiIndex.from_tuples([('ra', 'mean'), (
             'ra', 'std'), ('rb', 'mean'), ('rb', 'std')])
+        assert_frame_equal(result, expected, check_like=True)
+
+        # same name as the original column
+        # GH9052
+        expected = g['D'].agg({'result1': np.sum, 'result2': np.mean})
+        expected = expected.rename(columns={'result1': 'D'})
+        result = g['D'].agg({'D': np.sum, 'result2': np.mean})
         assert_frame_equal(result, expected, check_like=True)
 
     def test_multi_iter(self):
@@ -3985,11 +4024,13 @@ class TestGroupBy(tm.TestCase):
         df['datetime'] = df['datetime'].apply(
             lambda d: Timestamp(d, tz='US/Pacific'))
 
-        exp_idx1 = pd.DatetimeIndex(
-            ['2011-07-19 07:00:00', '2011-07-19 07:00:00',
-             '2011-07-19 08:00:00', '2011-07-19 08:00:00',
-             '2011-07-19 09:00:00', '2011-07-19 09:00:00'],
-            tz='US/Pacific', name='datetime')
+        exp_idx1 = pd.DatetimeIndex(['2011-07-19 07:00:00',
+                                     '2011-07-19 07:00:00',
+                                     '2011-07-19 08:00:00',
+                                     '2011-07-19 08:00:00',
+                                     '2011-07-19 09:00:00',
+                                     '2011-07-19 09:00:00'],
+                                    tz='US/Pacific', name='datetime')
         exp_idx2 = Index(['a', 'b'] * 3, name='label')
         exp_idx = MultiIndex.from_arrays([exp_idx1, exp_idx2])
         expected = DataFrame({'value1': [0, 3, 1, 4, 2, 5],
@@ -4005,9 +4046,9 @@ class TestGroupBy(tm.TestCase):
                         'value2': [1, 2, 3, 1, 2, 3]},
                        index=didx)
 
-        exp_idx = pd.DatetimeIndex(
-            ['2011-07-19 07:00:00', '2011-07-19 08:00:00',
-             '2011-07-19 09:00:00'], tz='Asia/Tokyo')
+        exp_idx = pd.DatetimeIndex(['2011-07-19 07:00:00',
+                                    '2011-07-19 08:00:00',
+                                    '2011-07-19 09:00:00'], tz='Asia/Tokyo')
         expected = DataFrame({'value1': [3, 5, 7], 'value2': [2, 4, 6]},
                              index=exp_idx, columns=['value1', 'value2'])
 
@@ -4024,8 +4065,8 @@ class TestGroupBy(tm.TestCase):
 3,2000-01-31 16:50:00,America/Chicago
 4,2000-01-01 16:50:00,America/New_York"""
 
-        df = pd.read_csv(
-            StringIO(data), header=None, names=['value', 'date', 'tz'])
+        df = pd.read_csv(StringIO(data), header=None,
+                         names=['value', 'date', 'tz'])
         result = df.groupby('tz').date.apply(
             lambda x: pd.to_datetime(x).dt.tz_localize(x.name))
 
@@ -4043,13 +4084,53 @@ class TestGroupBy(tm.TestCase):
         assert_series_equal(result, expected)
 
         tz = 'America/Chicago'
-        result = pd.to_datetime(df.groupby('tz').date.get_group(
-            tz)).dt.tz_localize(tz)
-        expected = pd.to_datetime(Series(
-            ['2000-01-28 16:47:00', '2000-01-29 16:48:00',
-             '2000-01-31 16:50:00'], index=[0, 1, 3
-                                            ], name='date')).dt.tz_localize(tz)
+        res_values = df.groupby('tz').date.get_group(tz)
+        result = pd.to_datetime(res_values).dt.tz_localize(tz)
+        exp_values = Series(['2000-01-28 16:47:00', '2000-01-29 16:48:00',
+                             '2000-01-31 16:50:00'],
+                            index=[0, 1, 3], name='date')
+        expected = pd.to_datetime(exp_values).dt.tz_localize(tz)
         assert_series_equal(result, expected)
+
+    def test_groupby_groups_periods(self):
+        dates = ['2011-07-19 07:00:00', '2011-07-19 08:00:00',
+                 '2011-07-19 09:00:00', '2011-07-19 07:00:00',
+                 '2011-07-19 08:00:00', '2011-07-19 09:00:00']
+        df = DataFrame({'label': ['a', 'a', 'a', 'b', 'b', 'b'],
+                        'period': [pd.Period(d, freq='H') for d in dates],
+                        'value1': np.arange(6, dtype='int64'),
+                        'value2': [1, 2] * 3})
+
+        exp_idx1 = pd.PeriodIndex(['2011-07-19 07:00:00',
+                                   '2011-07-19 07:00:00',
+                                   '2011-07-19 08:00:00',
+                                   '2011-07-19 08:00:00',
+                                   '2011-07-19 09:00:00',
+                                   '2011-07-19 09:00:00'],
+                                  freq='H', name='period')
+        exp_idx2 = Index(['a', 'b'] * 3, name='label')
+        exp_idx = MultiIndex.from_arrays([exp_idx1, exp_idx2])
+        expected = DataFrame({'value1': [0, 3, 1, 4, 2, 5],
+                              'value2': [1, 2, 2, 1, 1, 2]},
+                             index=exp_idx, columns=['value1', 'value2'])
+
+        result = df.groupby(['period', 'label']).sum()
+        assert_frame_equal(result, expected)
+
+        # by level
+        didx = pd.PeriodIndex(dates, freq='H')
+        df = DataFrame({'value1': np.arange(6, dtype='int64'),
+                        'value2': [1, 2, 3, 1, 2, 3]},
+                       index=didx)
+
+        exp_idx = pd.PeriodIndex(['2011-07-19 07:00:00',
+                                  '2011-07-19 08:00:00',
+                                  '2011-07-19 09:00:00'], freq='H')
+        expected = DataFrame({'value1': [3, 5, 7], 'value2': [2, 4, 6]},
+                             index=exp_idx, columns=['value1', 'value2'])
+
+        result = df.groupby(level=0).sum()
+        assert_frame_equal(result, expected)
 
     def test_groupby_reindex_inside_function(self):
         from pandas.tseries.api import DatetimeIndex
@@ -4311,8 +4392,11 @@ class TestGroupBy(tm.TestCase):
 
         # compare the results
         tm.assert_frame_equal(lexsorted_df, not_lexsorted_df)
-        tm.assert_frame_equal(lexsorted_df.groupby('a').mean(),
-                              not_lexsorted_df.groupby('a').mean())
+
+        expected = lexsorted_df.groupby('a').mean()
+        with tm.assert_produces_warning(com.PerformanceWarning):
+            result = not_lexsorted_df.groupby('a').mean()
+        tm.assert_frame_equal(expected, result)
 
     def test_groupby_levels_and_columns(self):
         # GH9344, GH9049
@@ -5557,7 +5641,10 @@ class TestGroupBy(tm.TestCase):
              'cumprod', 'tail', 'resample', 'cummin', 'fillna', 'cumsum',
              'cumcount', 'all', 'shift', 'skew', 'bfill', 'ffill', 'take',
              'tshift', 'pct_change', 'any', 'mad', 'corr', 'corrwith', 'cov',
-             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin'])
+             'dtypes', 'ndim', 'diff', 'idxmax', 'idxmin', 'inputconstructor',
+             'inputconstructor_sliced', 'inputconstructor_expanddim',
+             'lenshape', 'ffill', 'bfill', 'pad', 'backfill'])
+
         self.assertEqual(results, expected)
 
     def test_lexsort_indexer(self):
@@ -5763,7 +5850,6 @@ class TestGroupBy(tm.TestCase):
         data = np.array([np.timedelta64(1, 'ns')] * 5, dtype='m8[ns]')[:, None]
         accum = np.array([[0]], dtype='int64')
         actual = np.zeros_like(data, dtype='int64')
-        actual.fill(np.nan)
         pd.algos.group_cumsum(actual, data.view('int64'), labels, accum)
         expected = np.array([np.timedelta64(1, 'ns'), np.timedelta64(
             2, 'ns'), np.timedelta64(3, 'ns'), np.timedelta64(4, 'ns'),
@@ -6093,6 +6179,21 @@ class TestGroupBy(tm.TestCase):
         index = MultiIndex.from_arrays([data.id, data.amount])
         expected = pd.Series([1] * 5, name='name', index=index)
         tm.assert_series_equal(result, expected)
+
+    def test_transform_with_non_scalar_group(self):
+        # GH 10165
+        cols = pd.MultiIndex.from_tuples([
+            ('syn', 'A'), ('mis', 'A'), ('non', 'A'),
+            ('syn', 'C'), ('mis', 'C'), ('non', 'C'),
+            ('syn', 'T'), ('mis', 'T'), ('non', 'T'),
+            ('syn', 'G'), ('mis', 'G'), ('non', 'G')])
+        df = pd.DataFrame(np.random.randint(1, 10, (4, 12)),
+                          columns=cols,
+                          index=['A', 'C', 'G', 'T'])
+        self.assertRaisesRegexp(ValueError, 'transform must return a scalar '
+                                'value for each group.*', df.groupby
+                                (axis=1, level=1).transform,
+                                lambda z: z.div(z.sum(axis=1), axis=0))
 
 
 def assert_fp_equal(a, b):

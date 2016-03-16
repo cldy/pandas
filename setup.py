@@ -14,6 +14,15 @@ import re
 import platform
 from distutils.version import LooseVersion
 
+def is_platform_windows():
+    return sys.platform == 'win32' or sys.platform == 'cygwin'
+
+def is_platform_linux():
+    return sys.platform == 'linux2'
+
+def is_platform_mac():
+    return sys.platform == 'darwin'
+
 # versioning
 import versioneer
 cmdclass = versioneer.get_cmdclass()
@@ -262,7 +271,8 @@ class CheckSDist(sdist_class):
                  'pandas/parser.pyx',
                  'pandas/src/period.pyx',
                  'pandas/src/sparse.pyx',
-                 'pandas/src/testing.pyx']
+                 'pandas/src/testing.pyx',
+                 'pandas/io/sas/saslib.pyx']
 
     def initialize_options(self):
         sdist_class.initialize_options(self)
@@ -374,6 +384,11 @@ common_include = ['pandas/src/klib', 'pandas/src']
 def pxd(name):
     return os.path.abspath(pjoin('pandas', name + '.pxd'))
 
+# args to ignore warnings
+if is_platform_windows():
+    extra_compile_args=[]
+else:
+    extra_compile_args=['-Wno-unused-function']
 
 lib_depends = lib_depends + ['pandas/src/numpy_helper.h',
                              'pandas/src/parse_helper.h']
@@ -385,7 +400,7 @@ tseries_depends = ['pandas/src/datetime/np_datetime.h',
 
 
 # some linux distros require it
-libraries = ['m'] if 'win32' not in sys.platform else []
+libraries = ['m'] if not is_platform_windows() else []
 
 ext_data = dict(
     lib={'pyxfile': 'lib',
@@ -418,8 +433,10 @@ ext_data = dict(
                         'pandas/src/parser/io.h',
                         'pandas/src/numpy_helper.h'],
             'sources': ['pandas/src/parser/tokenizer.c',
-                        'pandas/src/parser/io.c']}
+                        'pandas/src/parser/io.c']},
 )
+
+ext_data["io.sas.saslib"] = {'pyxfile': 'io/sas/saslib'}
 
 extensions = []
 
@@ -436,7 +453,8 @@ for name, data in ext_data.items():
     obj = Extension('pandas.%s' % name,
                     sources=sources,
                     depends=data.get('depends', []),
-                    include_dirs=include)
+                    include_dirs=include,
+                    extra_compile_args=extra_compile_args)
 
     extensions.append(obj)
 
@@ -444,14 +462,16 @@ for name, data in ext_data.items():
 sparse_ext = Extension('pandas._sparse',
                        sources=[srcpath('sparse', suffix=suffix)],
                        include_dirs=[],
-                       libraries=libraries)
+                       libraries=libraries,
+                       extra_compile_args=extra_compile_args)
 
 extensions.extend([sparse_ext])
 
 testing_ext = Extension('pandas._testing',
                        sources=[srcpath('testing', suffix=suffix)],
                        include_dirs=[],
-                       libraries=libraries)
+                       libraries=libraries,
+                       extra_compile_args=extra_compile_args)
 
 extensions.extend([testing_ext])
 
@@ -471,7 +491,8 @@ packer_ext = Extension('pandas.msgpack._packer',
                                    subdir='msgpack')],
                         language='c++',
                         include_dirs=['pandas/src/msgpack'] + common_include,
-                        define_macros=macros)
+                        define_macros=macros,
+                        extra_compile_args=extra_compile_args)
 unpacker_ext = Extension('pandas.msgpack._unpacker',
                         depends=['pandas/src/msgpack/unpack.h',
                                  'pandas/src/msgpack/unpack_define.h',
@@ -481,7 +502,8 @@ unpacker_ext = Extension('pandas.msgpack._unpacker',
                                    subdir='msgpack')],
                         language='c++',
                         include_dirs=['pandas/src/msgpack'] + common_include,
-                        define_macros=macros)
+                        define_macros=macros,
+                        extra_compile_args=extra_compile_args)
 extensions.append(packer_ext)
 extensions.append(unpacker_ext)
 
@@ -505,7 +527,7 @@ ujson_ext = Extension('pandas.json',
                       include_dirs=['pandas/src/ujson/python',
                                     'pandas/src/ujson/lib',
                                     'pandas/src/datetime'] + common_include,
-                      extra_compile_args=['-D_GNU_SOURCE'])
+                      extra_compile_args=['-D_GNU_SOURCE'] + extra_compile_args)
 
 
 extensions.append(ujson_ext)
@@ -527,6 +549,7 @@ setup(name=DISTNAME,
                 'pandas.core',
                 'pandas.indexes',
                 'pandas.io',
+                'pandas.io.sas',
                 'pandas.rpy',
                 'pandas.sandbox',
                 'pandas.sparse',
@@ -551,7 +574,7 @@ setup(name=DISTNAME,
                                   'tests/data/legacy_pickle/*/*.pickle',
                                   'tests/data/legacy_msgpack/*/*.msgpack',
                                   'tests/data/*.csv*',
-                                  'tests/data/*.XPT',
+                                  'tests/data/*.xpt',
                                   'tests/data/*.dta',
                                   'tests/data/*.txt',
                                   'tests/data/*.xls',

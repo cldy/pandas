@@ -111,7 +111,7 @@ static void *grow_buffer(void *buffer, int length, int *capacity,
     void *newbuffer = buffer;
 
     // Can we fit potentially nbytes tokens (+ null terminators) in the stream?
-    while ( (length + space > cap) && (newbuffer != NULL) ){
+    while ( (length + space >= cap) && (newbuffer != NULL) ){
         cap = cap? cap << 1 : 2;
         buffer = newbuffer;
         newbuffer = safe_realloc(newbuffer, elsize * cap);
@@ -2185,7 +2185,7 @@ double xstrtod(const char *str, char **endptr, char decimal,
     p++;
     num_digits++;
 
-    p += (tsep != '\0' & *p == tsep);
+    p += (tsep != '\0' && *p == tsep);
   }
 
   // Process decimal part
@@ -2225,10 +2225,12 @@ double xstrtod(const char *str, char **endptr, char decimal,
     }
 
     // Process string of digits
+    num_digits = 0;
     n = 0;
     while (isdigit(*p))
     {
       n = n * 10 + (*p - '0');
+      num_digits++;
       p++;
     }
 
@@ -2236,6 +2238,10 @@ double xstrtod(const char *str, char **endptr, char decimal,
       exponent -= n;
     else
       exponent += n;
+
+    // If no digits, after the 'e'/'E', un-consume it
+    if (num_digits == 0)
+        p--;
   }
 
 
@@ -2352,7 +2358,7 @@ double precise_xstrtod(const char *str, char **endptr, char decimal,
             ++exponent;
 
         p++;
-        p += (tsep != '\0' & *p == tsep);
+        p += (tsep != '\0' && *p == tsep);
     }
 
     // Process decimal part
@@ -2396,10 +2402,12 @@ double precise_xstrtod(const char *str, char **endptr, char decimal,
         }
 
         // Process string of digits
+        num_digits = 0;
         n = 0;
         while (isdigit(*p))
         {
             n = n * 10 + (*p - '0');
+            num_digits++;
             p++;
         }
 
@@ -2407,6 +2415,10 @@ double precise_xstrtod(const char *str, char **endptr, char decimal,
             exponent -= n;
         else
             exponent += n;
+
+        // If no digits, after the 'e'/'E', un-consume it
+        if (num_digits == 0)
+            p--;
     }
 
     if (exponent > 308)

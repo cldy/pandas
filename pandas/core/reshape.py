@@ -61,7 +61,7 @@ class _Unstacker(object):
     """
 
     def __init__(self, values, index, level=-1, value_columns=None,
-                 fill_value=None):
+                 fill_value=None, frame_constr=DataFrame):
 
         self.is_categorical = None
         if values.ndim == 1:
@@ -72,6 +72,7 @@ class _Unstacker(object):
         self.values = values
         self.value_columns = value_columns
         self.fill_value = fill_value
+        self.frame_constr = frame_constr
 
         if value_columns is None and values.shape[1] != 1:  # pragma: no cover
             raise ValueError('must pass column labels for multi-column data')
@@ -164,7 +165,7 @@ class _Unstacker(object):
                 values[:, i], categories=self.is_categorical.categories,
                 ordered=True) for i in range(values.shape[-1])]
 
-        return DataFrame(values, index=index, columns=columns)
+        return self.frame_constr(values, index=index, columns=columns)
 
     def get_new_values(self):
         values = self.values
@@ -403,7 +404,8 @@ def unstack(obj, level, fill_value=None):
             return obj.T.stack(dropna=False)
     else:
         unstacker = _Unstacker(obj.values, obj.index, level=level,
-                               fill_value=fill_value)
+                               fill_value=fill_value,
+                               frame_constr=obj._constructor_expanddim)
         return unstacker.get_result()
 
 
@@ -505,7 +507,7 @@ def stack(frame, level=-1, dropna=True):
         mask = notnull(new_values)
         new_values = new_values[mask]
         new_index = new_index[mask]
-    return Series(new_values, index=new_index)
+    return frame._constructor_sliced(new_values, index=new_index)
 
 
 def stack_multiple(frame, level, dropna=True):
@@ -950,7 +952,7 @@ def wide_to_long(df, stubnames, i, j):
 
 
 def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
-                columns=None, sparse=False):
+                columns=None, sparse=False, drop_first=False):
     """
     Convert categorical variable into dummy/indicator variables
 
@@ -977,7 +979,11 @@ def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
         Otherwise returns a DataFrame with some SparseBlocks.
 
         .. versionadded:: 0.16.1
+    drop_first : bool, default False
+        Whether to get k-1 dummies out of n categorical levels by removing the
+        first level.
 
+        .. versionadded:: 0.18.0
     Returns
     -------
     dummies : DataFrame or SparseDataFrame
@@ -1017,8 +1023,25 @@ def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
     1  2       0       1       1       0       0
     2  3       1       0       0       0       1
 
-    See also ``Series.str.get_dummies``.
+    >>> pd.get_dummies(pd.Series(list('abcaa')))
+       a  b  c
+    0  1  0  0
+    1  0  1  0
+    2  0  0  1
+    3  1  0  0
+    4  1  0  0
 
+    >>> pd.get_dummies(pd.Series(list('abcaa')), drop_first=True))
+       b  c
+    0  0  0
+    1  1  0
+    2  0  1
+    3  0  0
+    4  0  0
+
+    See Also
+    --------
+    Series.str.get_dummies
     """
     from pandas.tools.merge import concat
     from itertools import cycle
@@ -1066,23 +1089,23 @@ def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
         for (col, pre, sep) in zip(columns_to_encode, prefix, prefix_sep):
 
             dummy = _get_dummies_1d(data[col], prefix=pre, prefix_sep=sep,
-                                    dummy_na=dummy_na, sparse=sparse)
+                                    dummy_na=dummy_na, sparse=sparse,
+                                    drop_first=drop_first)
             with_dummies.append(dummy)
         result = concat(with_dummies, axis=1)
     else:
         result = _get_dummies_1d(data, prefix, prefix_sep, dummy_na,
-                                 sparse=sparse)
+                                 sparse=sparse, drop_first=drop_first)
     return result
 
 
 def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False,
-                    sparse=False):
+                    sparse=False, drop_first=False):
     # Series avoids inconsistent NaN handling
     cat = Categorical.from_array(Series(data), ordered=True)
     levels = cat.categories
 
-    # if all NaN
-    if not dummy_na and len(levels) == 0:
+    def get_empty_Frame(data, sparse):
         if isinstance(data, Series):
             index = data.index
         else:
@@ -1092,10 +1115,18 @@ def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False,
         else:
             return SparseDataFrame(index=index)
 
+    # if all NaN
+    if not dummy_na and len(levels) == 0:
+        return get_empty_Frame(data, sparse)
+
     codes = cat.codes.copy()
     if dummy_na:
         codes[codes == -1] = len(cat.categories)
         levels = np.append(cat.categories, np.nan)
+
+    # if dummy_na, we just fake a nan level. drop_first will drop it again
+    if drop_first and len(levels) == 1:
+        return get_empty_Frame(data, sparse)
 
     number_of_cols = len(levels)
 
@@ -1119,6 +1150,11 @@ def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False,
                 continue
             sp_indices[code].append(ndx)
 
+        if drop_first:
+            # remove first categorical level to avoid perfect collinearity
+            # GH12042
+            sp_indices = sp_indices[1:]
+            dummy_cols = dummy_cols[1:]
         for col, ixs in zip(dummy_cols, sp_indices):
             sarr = SparseArray(np.ones(len(ixs)),
                                sparse_index=IntIndex(N, ixs), fill_value=0)
@@ -1133,6 +1169,10 @@ def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False,
             # reset NaN GH4446
             dummy_mat[codes == -1] = 0
 
+        if drop_first:
+            # remove first GH12042
+            dummy_mat = dummy_mat[:, 1:]
+            dummy_cols = dummy_cols[1:]
         return DataFrame(dummy_mat, index=index, columns=dummy_cols)
 
 

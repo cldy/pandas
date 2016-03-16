@@ -5,7 +5,6 @@ openpyxl
 xlsxwriter
 xlrd
 xlwt
-patsy
 scipy
 numexpr
 pytables
@@ -17,6 +16,8 @@ bottleneck
 sqlalchemy
 pymysql
 psycopg2
+xarray
+boto
 
 # incompat with conda ATM
 # beautiful-soup

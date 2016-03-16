@@ -124,13 +124,17 @@ class _Window(PandasObject, SelectionMixin):
     def _get_window(self, other=None):
         return self.window
 
+    @property
+    def _window_type(self):
+        return self.__class__.__name__
+
     def __unicode__(self):
         """ provide a nice str repr of our rolling object """
 
         attrs = ["{k}={v}".format(k=k, v=getattr(self, k))
                  for k in self._attributes
                  if getattr(self, k, None) is not None]
-        return "{klass} [{attrs}]".format(klass=self.__class__.__name__,
+        return "{klass} [{attrs}]".format(klass=self._window_type,
                                           attrs=','.join(attrs))
 
     def _shallow_copy(self, obj=None, **kwargs):
@@ -149,16 +153,21 @@ class _Window(PandasObject, SelectionMixin):
         if values is None:
             values = getattr(self._selected_obj, 'values', self._selected_obj)
 
-        # coerce dtypes as appropriate
+        # GH #12373 : rolling functions error on float32 data
+        # make sure the data is coerced to float64
         if com.is_float_dtype(values.dtype):
-            pass
+            values = com._ensure_float64(values)
         elif com.is_integer_dtype(values.dtype):
-            values = values.astype(float)
-        elif com.is_timedelta64_dtype(values.dtype):
-            values = values.view('i8').astype(float)
+            values = com._ensure_float64(values)
+        elif com.needs_i8_conversion(values.dtype):
+            raise NotImplementedError("ops for {action} for this "
+                                      "dtype {dtype} are not "
+                                      "implemented".format(
+                                          action=self._window_type,
+                                          dtype=values.dtype))
         else:
             try:
-                values = values.astype(float)
+                values = com._ensure_float64(values)
             except (ValueError, TypeError):
                 raise TypeError("cannot handle this type -> {0}"
                                 "".format(values.dtype))
@@ -457,7 +466,9 @@ class _Rolling(_Window):
 
                 def func(arg, window, min_periods=None):
                     minp = check_minp(min_periods, window)
-                    return cfunc(arg, window, minp, **kwargs)
+                    # GH #12373: rolling functions error on float32 data
+                    return cfunc(com._ensure_float64(arg),
+                                 window, minp, **kwargs)
 
             # calculation function
             if center:
@@ -494,15 +505,26 @@ class _Rolling_and_Expanding(_Rolling):
         obj = self._convert_freq()
         window = self._get_window()
         window = min(window, len(obj)) if not self.center else window
-        try:
-            converted = np.isfinite(obj).astype(float)
-        except TypeError:
-            converted = np.isfinite(obj.astype(float)).astype(float)
-        result = self._constructor(converted, window=window, min_periods=0,
-                                   center=self.center).sum()
 
-        result[result.isnull()] = 0
-        return result
+        blocks, obj = self._create_blocks(how=None)
+        results = []
+        for b in blocks:
+
+            if com.needs_i8_conversion(b.values):
+                result = b.notnull().astype(int)
+            else:
+                try:
+                    result = np.isfinite(b).astype(float)
+                except TypeError:
+                    result = np.isfinite(b.astype(float)).astype(float)
+
+                result[pd.isnull(result)] = 0
+
+            result = self._constructor(result, window=window, min_periods=0,
+                                       center=self.center).sum()
+            results.append(result)
+
+        return self._wrap_results(results, blocks, obj)
 
     _shared_docs['apply'] = dedent("""
     %(name)s function apply
@@ -657,6 +679,10 @@ class _Rolling_and_Expanding(_Rolling):
         window = self._get_window(other)
 
         def _get_cov(X, Y):
+            # GH #12373 : rolling functions error on float32 data
+            # to avoid potential overflow, cast the data to float64
+            X = X.astype('float64')
+            Y = Y.astype('float64')
             mean = lambda x: x.rolling(window, self.min_periods,
                                        center=self.center).mean(**kwargs)
             count = (X + Y).rolling(window=window,
@@ -1012,13 +1038,21 @@ class EWM(_Rolling):
 
     Parameters
     ----------
-    com : float. optional
-        Center of mass: :math:`\alpha = 1 / (1 + com)`,
+    com : float, optional
+        Specify decay in terms of center of mass,
+        :math:`\alpha = 1 / (1 + com),\text{ for } com \geq 0`
     span : float, optional
-        Specify decay in terms of span, :math:`\alpha = 2 / (span + 1)`
+        Specify decay in terms of span,
+        :math:`\alpha = 2 / (span + 1),\text{ for } span \geq 1`
     halflife : float, optional
-        Specify decay in terms of halflife,
-        :math:`\alpha = 1 - exp(log(0.5) / halflife)`
+        Specify decay in terms of half-life,
+        :math:`\alpha = 1 - exp(log(0.5) / halflife),\text{ for } halflife > 0`
+    alpha : float, optional
+        Specify smoothing factor :math:`\alpha` directly,
+        :math:`0 < \alpha \leq 1`
+
+        .. versionadded:: 0.18.0
+
     min_periods : int, default 0
         Minimum number of observations in window required to have a value
         (otherwise result is NA).
@@ -1037,16 +1071,10 @@ class EWM(_Rolling):
 
     Notes
     -----
-    Either center of mass, span or halflife must be specified
-
-    EWMA is sometimes specified using a "span" parameter `s`, we have that the
-    decay parameter :math:`\alpha` is related to the span as
-    :math:`\alpha = 2 / (s + 1) = 1 / (1 + c)`
-
-    where `c` is the center of mass. Given a span, the associated center of
-    mass is :math:`c = (s - 1) / 2`
-
-    So a "20-day EWMA" would have center 9.5.
+    Exactly one of center of mass, span, half-life, and alpha must be provided.
+    Allowed values and relationship between the parameters are specified in the
+    parameter descriptions above; see the link at the end of this section for
+    a detailed explanation.
 
     The `freq` keyword is used to conform time series data to a specified
     frequency by resampling the data. This is done with the default parameters
@@ -1070,14 +1098,15 @@ class EWM(_Rolling):
     (if adjust is True), and 1-alpha and alpha (if adjust is False).
 
     More details can be found at
-    http://pandas.pydata.org/pandas-docs/stable/computation.html#exponentially-weighted-moment-functions
+    http://pandas.pydata.org/pandas-docs/stable/computation.html#exponentially-weighted-windows
     """
     _attributes = ['com', 'min_periods', 'freq', 'adjust', 'ignore_na', 'axis']
 
-    def __init__(self, obj, com=None, span=None, halflife=None, min_periods=0,
-                 freq=None, adjust=True, ignore_na=False, axis=0):
+    def __init__(self, obj, com=None, span=None, halflife=None, alpha=None,
+                 min_periods=0, freq=None, adjust=True, ignore_na=False,
+                 axis=0):
         self.obj = obj
-        self.com = _get_center_of_mass(com, span, halflife)
+        self.com = _get_center_of_mass(com, span, halflife, alpha)
         self.min_periods = min_periods
         self.freq = freq
         self.adjust = adjust
@@ -1294,20 +1323,32 @@ def _flex_binary_moment(arg1, arg2, f, pairwise=False):
         return _flex_binary_moment(arg2, arg1, f)
 
 
-def _get_center_of_mass(com, span, halflife):
-    valid_count = len([x for x in [com, span, halflife] if x is not None])
+def _get_center_of_mass(com, span, halflife, alpha):
+    valid_count = len([x for x in [com, span, halflife, alpha]
+                      if x is not None])
     if valid_count > 1:
-        raise Exception("com, span, and halflife are mutually exclusive")
+        raise ValueError("com, span, halflife, and alpha "
+                         "are mutually exclusive")
 
-    if span is not None:
-        # convert span to center of mass
+    # Convert to center of mass; domain checks ensure 0 < alpha <= 1
+    if com is not None:
+        if com < 0:
+            raise ValueError("com must satisfy: com >= 0")
+    elif span is not None:
+        if span < 1:
+            raise ValueError("span must satisfy: span >= 1")
         com = (span - 1) / 2.
     elif halflife is not None:
-        # convert halflife to center of mass
+        if halflife <= 0:
+            raise ValueError("halflife must satisfy: halflife > 0")
         decay = 1 - np.exp(np.log(0.5) / halflife)
         com = 1 / decay - 1
-    elif com is None:
-        raise Exception("Must pass one of com, span, or halflife")
+    elif alpha is not None:
+        if alpha <= 0 or alpha > 1:
+            raise ValueError("alpha must satisfy: 0 < alpha <= 1")
+        com = (1.0 - alpha) / alpha
+    else:
+        raise ValueError("Must pass one of com, span, halflife, or alpha")
 
     return float(com)
 

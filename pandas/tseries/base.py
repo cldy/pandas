@@ -145,13 +145,13 @@ class DatetimeIndexOpsMixin(object):
     def __contains__(self, key):
         try:
             res = self.get_loc(key)
-            return np.isscalar(res) or type(res) == slice or np.any(res)
+            return lib.isscalar(res) or type(res) == slice or np.any(res)
         except (KeyError, TypeError, ValueError):
             return False
 
     def __getitem__(self, key):
         getitem = self._data.__getitem__
-        if np.isscalar(key):
+        if lib.isscalar(key):
             val = getitem(key)
             return self._box_func(val)
         else:
@@ -199,6 +199,27 @@ class DatetimeIndexOpsMixin(object):
         except ValueError:
             return None
 
+    def _nat_new(self, box=True):
+        """
+        Return Index or ndarray filled with NaT which has the same
+        length as the caller.
+
+        Parameters
+        ----------
+        box : boolean, default True
+            - If True returns a Index as the same as caller.
+            - If False returns ndarray of np.int64.
+        """
+        result = np.zeros(len(self), dtype=np.int64)
+        result.fill(tslib.iNaT)
+        if not box:
+            return result
+
+        attribs = self._get_attributes_dict()
+        if not isinstance(self, com.ABCPeriodIndex):
+            attribs['freq'] = None
+        return self._simple_new(result, **attribs)
+
     # Try to run function on index first, and then on elements of index
     # Especially important for group-by functionality
     def map(self, f):
@@ -224,8 +245,8 @@ class DatetimeIndexOpsMixin(object):
             sorted_values = np.sort(self.values)
             attribs = self._get_attributes_dict()
             freq = attribs['freq']
-            from pandas.tseries.period import PeriodIndex
-            if freq is not None and not isinstance(self, PeriodIndex):
+
+            if freq is not None and not isinstance(self, com.ABCPeriodIndex):
                 if freq.n > 0 and not ascending:
                     freq = freq * -1
                 elif freq.n < 0 and ascending:
@@ -432,12 +453,20 @@ class DatetimeIndexOpsMixin(object):
         Parameters
         ----------
         key : label of the slice bound
-        kind : optional, type of the indexing operation (loc/ix/iloc/None)
+        kind : {'ix', 'loc', 'getitem', 'iloc'} or None
         """
 
-        if (kind in ['loc'] and lib.isscalar(key) and
-                (is_integer(key) or is_float(key))):
-            self._invalid_indexer('index', key)
+        assert kind in ['ix', 'loc', 'getitem', 'iloc', None]
+
+        # we don't allow integer/float indexing for loc
+        # we don't allow float indexing for ix/getitem
+        if lib.isscalar(key):
+            is_int = is_integer(key)
+            is_flt = is_float(key)
+            if kind in ['loc'] and (is_int or is_flt):
+                self._invalid_indexer('index', key)
+            elif kind in ['ix', 'getitem'] and is_flt:
+                self._invalid_indexer('index', key)
 
         return (super(DatetimeIndexOpsMixin, self)
                 ._convert_scalar_indexer(key, kind=kind))

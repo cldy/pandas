@@ -411,7 +411,6 @@ class DataFrame(NDFrame):
         values = _prep_ndarray(values, copy=copy)
 
         if dtype is not None:
-
             if values.dtype != dtype:
                 try:
                     values = values.astype(dtype)
@@ -574,7 +573,10 @@ class DataFrame(NDFrame):
         Returns a LaTeX representation for a particular Dataframe.
         Mainly for use with nbconvert (jupyter notebook conversion to pdf).
         """
-        return self.to_latex()
+        if get_option('display.latex.repr'):
+            return self.to_latex()
+        else:
+            return None
 
     @property
     def style(self):
@@ -1494,7 +1496,7 @@ class DataFrame(NDFrame):
                 float_format=None, sparsify=None, index_names=True,
                 justify=None, bold_rows=True, classes=None, escape=True,
                 max_rows=None, max_cols=None, show_dimensions=False,
-                notebook=False):
+                notebook=False, decimal='.'):
         """
         Render a DataFrame as an HTML table.
 
@@ -1512,7 +1514,10 @@ class DataFrame(NDFrame):
         max_cols : int, optional
             Maximum number of columns to show before truncating. If None, show
             all.
+        decimal : string, default '.'
+            Character recognized as decimal separator, e.g. ',' in Europe
 
+            .. versionadded:: 0.18.0
         """
 
         if colSpace is not None:  # pragma: no cover
@@ -1530,7 +1535,8 @@ class DataFrame(NDFrame):
                                            bold_rows=bold_rows, escape=escape,
                                            max_rows=max_rows,
                                            max_cols=max_cols,
-                                           show_dimensions=show_dimensions)
+                                           show_dimensions=show_dimensions,
+                                           decimal=decimal)
         # TODO: a generic formatter wld b in DataFrameFormatter
         formatter.to_html(classes=classes, notebook=notebook)
 
@@ -1542,7 +1548,7 @@ class DataFrame(NDFrame):
                  header=True, index=True, na_rep='NaN', formatters=None,
                  float_format=None, sparsify=None, index_names=True,
                  bold_rows=True, column_format=None, longtable=None,
-                 escape=None, encoding=None):
+                 escape=None, encoding=None, decimal='.'):
         """
         Render a DataFrame to a tabular environment table. You can splice
         this into a LaTeX document. Requires \\usepackage{booktabs}.
@@ -1565,6 +1571,11 @@ class DataFrame(NDFrame):
             characters in column names.
         encoding : str, default None
             Default encoding is ascii in Python 2 and utf-8 in Python 3
+        decimal : string, default '.'
+            Character recognized as decimal separator, e.g. ',' in Europe
+
+            .. versionadded:: 0.18.0
+
         """
 
         if colSpace is not None:  # pragma: no cover
@@ -1585,7 +1596,7 @@ class DataFrame(NDFrame):
                                            bold_rows=bold_rows,
                                            sparsify=sparsify,
                                            index_names=index_names,
-                                           escape=escape)
+                                           escape=escape, decimal=decimal)
         formatter.to_latex(column_format=column_format, longtable=longtable,
                            encoding=encoding)
 
@@ -1616,6 +1627,7 @@ class DataFrame(NDFrame):
             human-readable units (base-2 representation).
         null_counts : boolean, default None
             Whether to show the non-null counts
+
             - If None, then only show if the frame is smaller than
               max_info_rows and max_info_columns.
             - If True, always show counts.
@@ -2007,7 +2019,7 @@ class DataFrame(NDFrame):
             # with all other indexing behavior
             if isinstance(key, Series) and not key.index.equals(self.index):
                 warnings.warn("Boolean Series key will be reindexed to match "
-                              "DataFrame index.", UserWarning)
+                              "DataFrame index.", UserWarning, stacklevel=3)
             elif len(key) != len(self.index):
                 raise ValueError('Item wrong length %d instead of %d.' %
                                  (len(key), len(self.index)))
@@ -2809,7 +2821,7 @@ class DataFrame(NDFrame):
                 level = col.get_level_values(col.nlevels - 1)
                 names.extend(col.names)
             elif isinstance(col, Series):
-                level = col.values
+                level = col._values
                 names.append(col.name)
             elif isinstance(col, Index):
                 level = col
@@ -4071,22 +4083,24 @@ class DataFrame(NDFrame):
         # this only matters if the reduction in values is of different dtype
         # e.g. if we want to apply to a SparseFrame, then can't directly reduce
         if reduce:
-
             values = self.values
 
-            # Create a dummy Series from an empty array
-            index = self._get_axis(axis)
-            empty_arr = np.empty(len(index), dtype=values.dtype)
-            dummy = Series(empty_arr, index=self._get_axis(axis),
-                           dtype=values.dtype)
+            # we cannot reduce using non-numpy dtypes,
+            # as demonstrated in gh-12244
+            if not is_internal_type(values):
+                # Create a dummy Series from an empty array
+                index = self._get_axis(axis)
+                empty_arr = np.empty(len(index), dtype=values.dtype)
+                dummy = Series(empty_arr, index=self._get_axis(axis),
+                               dtype=values.dtype)
 
-            try:
-                labels = self._get_agg_axis(axis)
-                result = lib.reduce(values, func, axis=axis, dummy=dummy,
-                                    labels=labels)
-                return Series(result, index=labels)
-            except Exception:
-                pass
+                try:
+                    labels = self._get_agg_axis(axis)
+                    result = lib.reduce(values, func, axis=axis, dummy=dummy,
+                                        labels=labels)
+                    return Series(result, index=labels)
+                except Exception:
+                    pass
 
         dtype = object if self._is_mixed_type else None
         if axis == 0:
@@ -4921,6 +4935,7 @@ class DataFrame(NDFrame):
             0 or 'index' for row-wise, 1 or 'columns' for column-wise
         interpolation : {'linear', 'lower', 'higher', 'midpoint', 'nearest'}
             .. versionadded:: 0.18.0
+
             This optional parameter specifies the interpolation method to use,
             when the desired quantile lies between two data points `i` and `j`:
 
@@ -4934,11 +4949,12 @@ class DataFrame(NDFrame):
         Returns
         -------
         quantiles : Series or DataFrame
-            If ``q`` is an array, a DataFrame will be returned where the
-            index is ``q``, the columns are the columns of self, and the
-            values are the quantiles.
-            If ``q`` is a float, a Series will be returned where the
-            index is the columns of self and the values are the quantiles.
+
+            - If ``q`` is an array, a DataFrame will be returned where the
+              index is ``q``, the columns are the columns of self, and the
+              values are the quantiles.
+            - If ``q`` is a float, a Series will be returned where the
+              index is the columns of self and the values are the quantiles.
 
         Examples
         --------
@@ -4954,6 +4970,7 @@ class DataFrame(NDFrame):
         0.1  1.3   3.7
         0.5  2.5  55.0
         """
+
         self._check_percentile(q)
         per = np.asarray(q) * 100
 

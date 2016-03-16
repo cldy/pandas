@@ -21,12 +21,12 @@ import pandas.core.common as com
 from pandas.core.missing import _clean_reindex_fill_method
 from pandas.core.common import (isnull, array_equivalent,
                                 is_object_dtype, is_datetimetz, ABCSeries,
-                                ABCPeriodIndex,
+                                ABCPeriodIndex, ABCMultiIndex,
                                 _values_from_object, is_float, is_integer,
                                 is_iterator, is_categorical_dtype,
                                 _ensure_object, _ensure_int64, is_bool_indexer,
                                 is_list_like, is_bool_dtype,
-                                is_integer_dtype)
+                                is_integer_dtype, is_float_dtype)
 from pandas.core.strings import StringAccessorMixin
 
 from pandas.core.config import get_option
@@ -162,7 +162,46 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
 
             if dtype is not None:
                 try:
-                    data = np.array(data, dtype=dtype, copy=copy)
+
+                    # we need to avoid having numpy coerce
+                    # things that look like ints/floats to ints unless
+                    # they are actually ints, e.g. '0' and 0.0
+                    # should not be coerced
+                    # GH 11836
+                    if is_integer_dtype(dtype):
+                        inferred = lib.infer_dtype(data)
+                        if inferred == 'integer':
+                            data = np.array(data, copy=copy, dtype=dtype)
+                        elif inferred in ['floating', 'mixed-integer-float']:
+
+                            # if we are actually all equal to integers
+                            # then coerce to integer
+                            from .numeric import Int64Index, Float64Index
+                            try:
+                                res = data.astype('i8')
+                                if (res == data).all():
+                                    return Int64Index(res, copy=copy,
+                                                      name=name)
+                            except (TypeError, ValueError):
+                                pass
+
+                            # return an actual float index
+                            return Float64Index(data, copy=copy, dtype=dtype,
+                                                name=name)
+
+                        elif inferred == 'string':
+                            pass
+                        else:
+                            data = data.astype(dtype)
+                    elif is_float_dtype(dtype):
+                        inferred = lib.infer_dtype(data)
+                        if inferred == 'string':
+                            pass
+                        else:
+                            data = data.astype(dtype)
+                    else:
+                        data = np.array(data, dtype=dtype, copy=copy)
+
                 except (TypeError, ValueError):
                     pass
 
@@ -221,7 +260,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         elif hasattr(data, '__array__'):
             return Index(np.asarray(data), dtype=dtype, copy=copy, name=name,
                          **kwargs)
-        elif data is None or np.isscalar(data):
+        elif data is None or lib.isscalar(data):
             cls._scalar_data_error(data)
         else:
             if (tupleize_cols and isinstance(data, list) and data and
@@ -447,7 +486,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         """
 
         if not isinstance(data, (np.ndarray, Index)):
-            if data is None or np.isscalar(data):
+            if data is None or lib.isscalar(data):
                 cls._scalar_data_error(data)
 
             # other iterable of some kind
@@ -863,6 +902,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
     _na_value = np.nan
     """The expected NA value to use with this index."""
 
+    # introspection
     @property
     def is_monotonic(self):
         """ alias for is_monotonic_increasing (deprecated) """
@@ -915,11 +955,12 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         return self.inferred_type in ['categorical']
 
     def is_mixed(self):
-        return 'mixed' in self.inferred_type
+        return self.inferred_type in ['mixed']
 
     def holds_integer(self):
         return self.inferred_type in ['integer', 'mixed-integer']
 
+    # validate / convert indexers
     def _convert_scalar_indexer(self, key, kind=None):
         """
         convert a scalar indexer
@@ -927,47 +968,42 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         Parameters
         ----------
         key : label of the slice bound
-        kind : optional, type of the indexing operation (loc/ix/iloc/None)
-
-        right now we are converting
-        floats -> ints if the index supports it
+        kind : {'ix', 'loc', 'getitem', 'iloc'} or None
         """
 
-        def to_int():
-            ikey = int(key)
-            if ikey != key:
-                return self._invalid_indexer('label', key)
-            return ikey
+        assert kind in ['ix', 'loc', 'getitem', 'iloc', None]
 
         if kind == 'iloc':
-            if is_integer(key):
-                return key
-            elif is_float(key):
-                key = to_int()
-                warnings.warn("scalar indexers for index type {0} should be "
-                              "integers and not floating point".format(
-                                  type(self).__name__),
-                              FutureWarning, stacklevel=5)
-                return key
-            return self._invalid_indexer('label', key)
+            return self._validate_indexer('positional', key, kind)
 
-        if is_float(key):
-            if isnull(key):
-                return self._invalid_indexer('label', key)
-            warnings.warn("scalar indexers for index type {0} should be "
-                          "integers and not floating point".format(
-                              type(self).__name__),
-                          FutureWarning, stacklevel=3)
-            return to_int()
+        if len(self) and not isinstance(self, ABCMultiIndex,):
+
+            # we can raise here if we are definitive that this
+            # is positional indexing (eg. .ix on with a float)
+            # or label indexing if we are using a type able
+            # to be represented in the index
+
+            if kind in ['getitem', 'ix'] and is_float(key):
+                if not self.is_floating():
+                    return self._invalid_indexer('label', key)
+
+            elif kind in ['loc'] and is_float(key):
+
+                # we want to raise KeyError on string/mixed here
+                # technically we *could* raise a TypeError
+                # on anything but mixed though
+                if self.inferred_type not in ['floating',
+                                              'mixed-integer-float',
+                                              'string',
+                                              'unicode',
+                                              'mixed']:
+                    return self._invalid_indexer('label', key)
+
+            elif kind in ['loc'] and is_integer(key):
+                if not self.holds_integer():
+                    return self._invalid_indexer('label', key)
 
         return key
-
-    def _convert_slice_indexer_getitem(self, key, is_index_slice=False):
-        """ called from the getitem slicers, determine how to treat the key
-            whether positional or not """
-        if self.is_integer() or is_index_slice:
-            return key
-        return self._convert_slice_indexer(key)
 
     def _convert_slice_indexer(self, key, kind=None):
         """
@@ -976,8 +1012,9 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         Parameters
         ----------
         key : label of the slice bound
-        kind : optional, type of the indexing operation (loc/ix/iloc/None)
+        kind : {'ix', 'loc', 'getitem', 'iloc'} or None
         """
+        assert kind in ['ix', 'loc', 'getitem', 'iloc', None]
 
         # if we are not a slice, then we are done
         if not isinstance(key, slice):
@@ -985,46 +1022,14 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
 
         # validate iloc
         if kind == 'iloc':
+            return slice(self._validate_indexer('slice', key.start, kind),
+                         self._validate_indexer('slice', key.stop, kind),
+                         self._validate_indexer('slice', key.step, kind))
 
-            # need to coerce to_int if needed
-            def f(c):
-                v = getattr(key, c)
-                if v is None or is_integer(v):
-                    return v
-
-                # warn if it's a convertible float
-                if v == int(v):
-                    warnings.warn("slice indexers when using iloc should be "
-                                  "integers and not floating point",
-                                  FutureWarning, stacklevel=7)
-                    return int(v)
-
-                self._invalid_indexer('slice {0} value'.format(c), v)
-
-            return slice(*[f(c) for c in ['start', 'stop', 'step']])
-
-        # validate slicers
-        def validate(v):
-            if v is None or is_integer(v):
-                return True
-
-            # dissallow floats (except for .ix)
-            elif is_float(v):
-                if kind == 'ix':
-                    return True
-
-                return False
-
-            return True
-
-        for c in ['start', 'stop', 'step']:
-            v = getattr(key, c)
-            if not validate(v):
-                self._invalid_indexer('slice {0} value'.format(c), v)
-
-        # figure out if this is a positional indexer
+        # potentially cast the bounds to integers
         start, stop, step = key.start, key.stop, key.step
 
+        # figure out if this is a positional indexer
         def is_int(v):
             return v is None or is_integer(v)
 
@@ -1033,8 +1038,14 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         is_positional = is_index_slice and not self.is_integer()
 
         if kind == 'getitem':
-            return self._convert_slice_indexer_getitem(
-                key, is_index_slice=is_index_slice)
+            """
+            called from the getitem slicers, validate that we are in fact
+            integers
+            """
+            if self.is_integer() or is_index_slice:
+                return slice(self._validate_indexer('slice', key.start, kind),
+                             self._validate_indexer('slice', key.stop, kind),
+                             self._validate_indexer('slice', key.step, kind))
 
         # convert the slice to an indexer here
 
@@ -1057,7 +1068,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
             indexer = key
         else:
             try:
-                indexer = self.slice_indexer(start, stop, step)
+                indexer = self.slice_indexer(start, stop, step, kind=kind)
             except Exception:
                 if is_index_slice:
                     if self.is_integer():
@@ -1241,7 +1252,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         getitem = self._data.__getitem__
         promote = self._shallow_copy
 
-        if np.isscalar(key):
+        if lib.isscalar(key):
             return getitem(key)
 
         if isinstance(key, slice):
@@ -1254,7 +1265,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
 
         key = _values_from_object(key)
         result = getitem(key)
-        if not np.isscalar(result):
+        if not lib.isscalar(result):
             return promote(result)
         else:
             return result
@@ -1861,7 +1872,10 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
                 raise ValueError('tolerance argument only valid if using pad, '
                                  'backfill or nearest lookups')
             key = _values_from_object(key)
-            return self._engine.get_loc(key)
+            try:
+                return self._engine.get_loc(key)
+            except KeyError:
+                return self._engine.get_loc(self._maybe_cast_indexer(key))
 
         indexer = self.get_indexer([key], method=method, tolerance=tolerance)
         if indexer.ndim > 1 or indexer.size > 1:
@@ -1891,10 +1905,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         s = _values_from_object(series)
         k = _values_from_object(key)
 
-        # prevent integer truncation bug in indexing
-        if is_float(k) and not self.is_floating():
-            raise KeyError
-
+        k = self._convert_scalar_indexer(k, kind='getitem')
         try:
             return self._engine.get_value(s, k,
                                           tz=getattr(series.dtype, 'tz', None))
@@ -1916,7 +1927,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
                 raise e1
         except TypeError:
             # python 3
-            if np.isscalar(key):  # pragma: no cover
+            if lib.isscalar(key):  # pragma: no cover
                 raise IndexError(key)
             raise InvalidIndexError(key)
 
@@ -2236,6 +2247,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
             if self.equals(target):
                 indexer = None
             else:
+
                 if self.is_unique:
                     indexer = self.get_indexer(target, method=method,
                                                limit=limit,
@@ -2695,6 +2707,37 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
 
         return slice(start_slice, end_slice, step)
 
+    def _maybe_cast_indexer(self, key):
+        """
+        If we have a float key and are not a floating index
+        then try to cast to an int if equivalent
+        """
+
+        if is_float(key) and not self.is_floating():
+            try:
+                ckey = int(key)
+                if ckey == key:
+                    key = ckey
+            except (ValueError, TypeError):
+                pass
+        return key
+
+    def _validate_indexer(self, form, key, kind):
+        """
+        if we are positional indexer
+        validate that we have appropriate typed bounds
+        must be an integer
+        """
+        assert kind in ['ix', 'loc', 'getitem', 'iloc']
+
+        if key is None:
+            pass
+        elif is_integer(key):
+            pass
+        elif kind in ['iloc', 'getitem']:
+            self._invalid_indexer(form, key)
+        return key
+
     def _maybe_cast_slice_bound(self, label, side, kind):
         """
         This function should be overloaded in subclasses that allow non-trivial
@@ -2705,7 +2748,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         ----------
         label : object
         side : {'left', 'right'}
-        kind : string / None
+        kind : {'ix', 'loc', 'getitem'}
 
         Returns
         -------
@@ -2716,13 +2759,16 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         Value of `side` parameter should be validated in caller.
 
         """
+        assert kind in ['ix', 'loc', 'getitem', None]
 
         # We are a plain index here (sub-class override this method if they
         # wish to have special treatment for floats/ints, e.g. Float64Index and
         # datetimelike Indexes
         # reject them
         if is_float(label):
-            self._invalid_indexer('slice', label)
+            if not (kind in ['ix'] and (self.holds_integer() or
+                                        self.is_floating())):
+                self._invalid_indexer('slice', label)
 
         # we are trying to find integer bounds on a non-integer based index
         # this is rejected (generally .loc gets you here)
@@ -2755,9 +2801,11 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         ----------
         label : object
         side : {'left', 'right'}
-        kind : string / None, the type of indexer
+        kind : {'ix', 'loc', 'getitem'}
 
         """
+        assert kind in ['ix', 'loc', 'getitem', None]
+
         if side not in ('left', 'right'):
             raise ValueError("Invalid value for side kwarg,"
                              " must be either 'left' or 'right': %s" %
@@ -2813,7 +2861,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
             If None, defaults to the end
         step : int, defaults None
             If None, defaults to 1
-        kind : string, defaults None
+        kind : {'ix', 'loc', 'getitem'} or None
 
         Returns
         -------

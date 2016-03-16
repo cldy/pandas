@@ -370,6 +370,7 @@ be broadcast:
 or it can return False if broadcasting can not be done:
 
 .. ipython:: python
+   :okwarning:
 
     np.array([1, 2, 3]) == np.array([1, 2])
 
@@ -1170,6 +1171,15 @@ The :meth:`~DataFrame.rename` method also provides an ``inplace`` named
 parameter that is by default ``False`` and copies the underlying data. Pass
 ``inplace=True`` to rename the data in place.
 
+.. versionadded:: 0.18.0
+
+Finally, :meth:`~Series.rename` also accepts a scalar or list-like
+for altering the ``Series.name`` attribute.
+
+.. ipython:: python
+
+   s.rename("scalar-name")
+
 .. _basics.rename_axis:
 
 The Panel class has a related :meth:`~Panel.rename_axis` class which can rename
@@ -1748,7 +1758,7 @@ but occasionally has non-dates intermixed and you want to represent as missing.
                  'foo', 1.0, 1, pd.Timestamp('20010104'),
                  '20010105'], dtype='O')
    s
-   s.convert_objects(convert_dates='coerce')
+   pd.to_datetime(s, errors='coerce')
 
 In addition, :meth:`~DataFrame.convert_objects` will attempt the *soft* conversion of any *object* dtypes, meaning that if all
 the objects in a Series are of the same type, the Series will have that dtype.

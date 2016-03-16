@@ -1,6 +1,4 @@
 from datetime import datetime, timedelta, time
-import sys
-
 import numpy as np
 
 import pandas.lib as lib
@@ -9,17 +7,6 @@ import pandas.core.common as com
 from pandas.core.common import ABCIndexClass
 import pandas.compat as compat
 from pandas.util.decorators import deprecate_kwarg
-
-try:
-    import dateutil
-    # raise exception if dateutil 2.0 install on 2.x platform
-    if (sys.version_info[0] == 2 and
-            dateutil.__version__ == '2.0'):  # pragma: no cover
-        raise Exception('dateutil 2.0 incompatible with Python 2.x, you must '
-                        'install version 1.5 or 2.1+!')
-except ImportError:  # pragma: no cover
-    print('Please install python-dateutil via easy_install or some method!')
-    raise  # otherwise a 2nd import won't show the message
 
 _DATEUTIL_LEXER_SPLIT = None
 try:
@@ -190,6 +177,7 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
     ----------
     arg : string, datetime, list, tuple, 1-d array, or Series
     errors : {'ignore', 'raise', 'coerce'}, default 'raise'
+
         - If 'raise', then invalid parsing will raise an exception
         - If 'coerce', then invalid parsing will be set as NaT
         - If 'ignore', then invalid parsing will return the input
@@ -201,10 +189,12 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
         with day first (this is a known bug, based on dateutil behavior).
     yearfirst : boolean, default False
         Specify a date parse order if `arg` is str or its list-likes.
+
         - If True parses dates with the year first, eg 10/11/12 is parsed as
           2010-11-12.
         - If both dayfirst and yearfirst are True, yearfirst is preceded (same
           as dateutil).
+
         Warning: yearfirst=True is not strict, but will prefer to parse
         with year first (this is a known bug, based on dateutil beahavior).
 
@@ -214,19 +204,24 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
         Return UTC DatetimeIndex if True (converting any tz-aware
         datetime.datetime objects as well).
     box : boolean, default True
+
         - If True returns a DatetimeIndex
         - If False returns ndarray of values.
     format : string, default None
         strftime to parse time, eg "%d/%m/%Y", note that "%f" will parse
         all the way up to nanoseconds.
     exact : boolean, True by default
+
         - If True, require an exact format match.
         - If False, allow the format to match anywhere in the target string.
+
     unit : unit of the arg (D,s,ms,us,ns) denote the unit in epoch
         (e.g. a unix timestamp), which is an integer/float number.
     infer_datetime_format : boolean, default False
-        If no `format` is given, try to infer the format based on the first
-        datetime string. Provides a large speed-up in many cases.
+        If True and no `format` is given, attempt to infer the format of the
+        datetime strings, and if it can be inferred, switch to a faster
+        method of parsing them. In some cases this can increase the parsing
+        speed by ~5-10x.
 
     Returns
     -------
@@ -258,8 +253,8 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
 
     Or from strings
 
-    >>> df = df.astype(str)
-    >>> pd.to_datetime(df.day + df.month + df.year, format="%d%m%Y")
+    >>> dfs = df.astype(str)
+    >>> pd.to_datetime(dfs.day + dfs.month + dfs.year, format="%d%m%Y")
     0    2000-01-01
     1    2000-01-02
     ...
@@ -267,12 +262,26 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
     99   2000-04-09
     Length: 100, dtype: datetime64[ns]
 
+    Infer the format from the first entry
+
+    >>> pd.to_datetime(dfs.month + '/' +  dfs.day + '/' + dfs.year,
+                       infer_datetime_format=True)
+    0    2000-01-01
+    1    2000-01-02
+    ...
+    98   2000-04-08
+    99   2000-04-09
+
+    This gives the same results as omitting the `infer_datetime_format=True`,
+    but is much faster.
+
     Date that does not meet timestamp limitations:
 
     >>> pd.to_datetime('13000101', format='%Y%m%d')
     datetime.datetime(1300, 1, 1, 0, 0)
     >>> pd.to_datetime('13000101', format='%Y%m%d', errors='coerce')
     NaT
+
     """
     return _to_datetime(arg, errors=errors, dayfirst=dayfirst,
                         yearfirst=yearfirst,
@@ -310,7 +319,7 @@ def _to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
             if not isinstance(arg, DatetimeIndex):
                 return DatetimeIndex(arg, tz='utc' if utc else None)
             if utc:
-                arg = arg.tz_convert(None)
+                arg = arg.tz_convert(None).tz_localize('UTC')
             return arg
 
         elif format is None and com.is_integer_dtype(arg) and unit == 'ns':

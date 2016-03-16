@@ -8,10 +8,7 @@
    np.set_printoptions(precision=4, suppress=True)
    import pandas as pd
    import matplotlib
-   try:
-      matplotlib.style.use('ggplot')
-   except AttributeError:
-      pd.options.display.mpl_style = 'default'
+   matplotlib.style.use('ggplot')
    import matplotlib.pyplot as plt
    plt.close('all')
    pd.options.display.max_rows=15
@@ -257,7 +254,7 @@ accept the following arguments:
 
    The ``freq`` and ``how`` arguments were in the API prior to 0.18.0 changes. These are deprecated in the new API. You can simply resample the input prior to creating a window function.
 
-   For example, instead of ``s.rolling(window=5,freq='D').max()`` to get the max value on a rolling 5 Day window, one could use ``s.resample('D',how='max').rolling(window=5).max()``, which first resamples the data to daily data, then provides a rolling 5 day window.
+   For example, instead of ``s.rolling(window=5,freq='D').max()`` to get the max value on a rolling 5 Day window, one could use ``s.resample('D').max().rolling(window=5).max()``, which first resamples the data to daily data, then provides a rolling 5 day window.
 
 We can then call methods on these ``rolling`` objects. These return like-indexed objects:
 
@@ -480,9 +477,7 @@ Aggregation
 -----------
 
 Once the ``Rolling``, ``Expanding`` or ``EWM`` objects have been created, several methods are available to
-perform multiple computations on the data. This is very similar to a ``.groupby.agg`` seen :ref:`here <groupby.aggregate>`.
-
-An obvious one is aggregation via the ``aggregate`` or equivalently ``agg`` method:
+perform multiple computations on the data. This is very similar to a ``.groupby(...).agg`` seen :ref:`here <groupby.aggregate>`.
 
 .. ipython:: python
 
@@ -548,7 +543,7 @@ columns of a DataFrame:
           'B' : lambda x: np.std(x, ddof=1)})
 
 The function names can also be strings. In order for a string to be valid it
-must be implemented on the Windowed object
+must be implemented on the windowed object
 
 .. ipython:: python
 
@@ -650,7 +645,7 @@ Exponentially Weighted Windows
 
 A related set of functions are exponentially weighted versions of several of
 the above statistics. A similar interface to ``.rolling`` and ``.expanding`` is accessed
-thru the ``.ewm`` method to receive a :class:`~pandas.core.window.EWM` object.
+thru the ``.ewm`` method to receive an :class:`~pandas.core.window.EWM` object.
 A number of expanding EW (exponentially weighted)
 methods are provided:
 
@@ -736,24 +731,29 @@ therefore there is an assumption that :math:`x_0` is not an ordinary value
 but rather an exponentially weighted moment of the infinite series up to that
 point.
 
-One must have :math:`0 < \alpha \leq 1`, but rather than pass :math:`\alpha`
-directly, it's easier to think about either the **span**, **center of mass
-(com)** or **halflife** of an EW moment:
+One must have :math:`0 < \alpha \leq 1`, and while since version 0.18.0
+it has been possible to pass :math:`\alpha` directly, it's often easier
+to think about either the **span**, **center of mass (com)** or **half-life**
+of an EW moment:
 
 .. math::
 
    \alpha =
     \begin{cases}
-        \frac{2}{s + 1},               & s = \text{span}\\
-        \frac{1}{1 + c},               & c = \text{center of mass}\\
-        1 - \exp^{\frac{\log 0.5}{h}}, & h = \text{half life}
+        \frac{2}{s + 1},               & \text{for span}\ s \geq 1\\
+        \frac{1}{1 + c},               & \text{for center of mass}\ c \geq 0\\
+        1 - \exp^{\frac{\log 0.5}{h}}, & \text{for half-life}\ h > 0
     \end{cases}
 
-One must specify precisely one of the three to the EW functions. **Span**
-corresponds to what is commonly called a "20-day EW moving average" for
-example. **Center of mass** has a more physical interpretation. For example,
-**span** = 20 corresponds to **com** = 9.5. **Halflife** is the period of
-time for the exponential weight to reduce to one half.
+One must specify precisely one of **span**, **center of mass**, **half-life**
+and **alpha** to the EW functions:
+
+- **Span** corresponds to what is commonly called an "N-day EW moving average".
+- **Center of mass** has a more physical interpretation and can be thought of
+  in terms of span: :math:`c = (s - 1) / 2`.
+- **Half-life** is the period of time for the exponential weight to reduce to
+  one half.
+- **Alpha** specifies the smoothing factor directly.
 
 Here is an example for a univariate time series:
 
@@ -804,5 +804,5 @@ are scaled by debiasing factors
 
 (For :math:`w_i = 1`, this reduces to the usual :math:`N / (N - 1)` factor,
 with :math:`N = t + 1`.)
-See http://en.wikipedia.org/wiki/Weighted_arithmetic_mean#Weighted_sample_variance
+See `Weighted Sample Variance <http://en.wikipedia.org/wiki/Weighted_arithmetic_mean#Weighted_sample_variance>`__
 for further details.

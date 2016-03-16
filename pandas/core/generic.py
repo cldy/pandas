@@ -546,13 +546,16 @@ class NDFrame(PandasObject):
     _shared_docs['rename'] = """
         Alter axes input function or functions. Function / dict values must be
         unique (1-to-1). Labels not contained in a dict / Series will be left
-        as-is.
+        as-is. Alternatively, change ``Series.name`` with a scalar
+        value (Series only).
 
         Parameters
         ----------
-        %(axes)s : dict-like or function, optional
-            Transformation to apply to that axis values
-
+        %(axes)s : scalar, list-like, dict-like or function, optional
+            Scalar or list-like will alter the ``Series.name`` attribute,
+            and raise on DataFrame or Panel.
+            dict-like or functions are transformations to apply to
+            that axis' values
         copy : boolean, default True
             Also copy underlying data
         inplace : boolean, default False
@@ -562,6 +565,43 @@ class NDFrame(PandasObject):
         Returns
         -------
         renamed : %(klass)s (new object)
+
+        See Also
+        --------
+        pandas.NDFrame.rename_axis
+
+        Examples
+        --------
+        >>> s = pd.Series([1, 2, 3])
+        >>> s
+        0    1
+        1    2
+        2    3
+        dtype: int64
+        >>> s.rename("my_name") # scalar, changes Series.name
+        0    1
+        1    2
+        2    3
+        Name: my_name, dtype: int64
+        >>> s.rename(lambda x: x ** 2)  # function, changes labels
+        0    1
+        1    2
+        4    3
+        dtype: int64
+        >>> s.rename({1: 3, 2: 5})  # mapping, changes labels
+        0    1
+        3    2
+        5    3
+        dtype: int64
+        >>> df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+        >>> df.rename(2)
+        ...
+        TypeError: 'int' object is not callable
+        >>> df.rename(index=str, columns={"A": "a", "B": "c"})
+           a  c
+        0  1  4
+        1  2  5
+        2  3  6
         """
 
     @Appender(_shared_docs['rename'] % dict(axes='axes keywords for this'
@@ -617,12 +657,15 @@ class NDFrame(PandasObject):
     def rename_axis(self, mapper, axis=0, copy=True, inplace=False):
         """
         Alter index and / or columns using input function or functions.
+        A scaler or list-like for ``mapper`` will alter the ``Index.name``
+        or ``MultiIndex.names`` attribute.
+        A function or dict for ``mapper`` will alter the labels.
         Function / dict values must be unique (1-to-1). Labels not contained in
         a dict / Series will be left as-is.
 
         Parameters
         ----------
-        mapper : dict-like or function, optional
+        mapper : scalar, list-like, dict-like or function, optional
         axis : int or string, default 0
         copy : boolean, default True
             Also copy underlying data
@@ -631,11 +674,88 @@ class NDFrame(PandasObject):
         Returns
         -------
         renamed : type of caller
+
+        See Also
+        --------
+        pandas.NDFrame.rename
+        pandas.Index.rename
+
+        Examples
+        --------
+        >>> df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+        >>> df.rename_axis("foo")  # scalar, alters df.index.name
+             A  B
+        foo
+        0    1  4
+        1    2  5
+        2    3  6
+        >>> df.rename_axis(lambda x: 2 * x)  # function: alters labels
+           A  B
+        0  1  4
+        2  2  5
+        4  3  6
+        >>> df.rename_axis({"A": "ehh", "C": "see"}, axis="columns")  # mapping
+           ehh  B
+        0    1  4
+        1    2  5
+        2    3  6
         """
-        axis = self._get_axis_name(axis)
-        d = {'copy': copy, 'inplace': inplace}
-        d[axis] = mapper
-        return self.rename(**d)
+        is_scalar_or_list = (
+            (not com.is_sequence(mapper) and not callable(mapper)) or
+            (com.is_list_like(mapper) and not com.is_dict_like(mapper))
+        )
+
+        if is_scalar_or_list:
+            return self._set_axis_name(mapper, axis=axis)
+        else:
+            axis = self._get_axis_name(axis)
+            d = {'copy': copy, 'inplace': inplace}
+            d[axis] = mapper
+            return self.rename(**d)
+
+    def _set_axis_name(self, name, axis=0):
+        """
+        Alter the name or names of the axis, returning self.
+
+        Parameters
+        ----------
+        name : str or list of str
+            Name for the Index, or list of names for the MultiIndex
+        axis : int or str
+           0 or 'index' for the index; 1 or 'columns' for the columns
+
+        Returns
+        -------
+        renamed : type of caller
+
+        See Also
+        --------
+        pandas.DataFrame.rename
+        pandas.Series.rename
+        pandas.Index.rename
+
+        Examples
+        --------
+        >>> df._set_axis_name("foo")
+             A
+        foo
+        0    1
+        1    2
+        2    3
+        >>> df.index = pd.MultiIndex.from_product([['A'], ['a', 'b', 'c']])
+        >>> df._set_axis_name(["bar", "baz"])
+                 A
+        bar baz
+        A   a    1
+            b    2
+            c    3
+        """
+        axis = self._get_axis_number(axis)
+        idx = self._get_axis(axis).set_names(name)
+
+        renamed = self.copy(deep=True)
+        renamed.set_axis(axis, idx)
+        return renamed
 
     # ----------------------------------------------------------------------
     # Comparisons
@@ -722,7 +842,43 @@ class NDFrame(PandasObject):
 
     @property
     def empty(self):
-        """True if NDFrame is entirely empty [no items]"""
+        """True if NDFrame is entirely empty [no items], meaning any of the
+        axes are of length 0.
+
+        Notes
+        -----
+        If NDFrame contains only NaNs, it is still not considered empty. See
+        the example below.
+
+        Examples
+        --------
+        An example of an actual empty DataFrame. Notice the index is empty:
+
+        >>> df_empty = pd.DataFrame({'A' : []})
+        >>> df_empty
+        Empty DataFrame
+        Columns: [A]
+        Index: []
+        >>> df_empty.empty
+        True
+
+        If we only have NaNs in our DataFrame, it is not considered empty! We
+        will need to drop the NaNs to make the DataFrame empty:
+
+        >>> df = pd.DataFrame({'A' : [np.nan]})
+        >>> df
+            A
+        0 NaN
+        >>> df.empty
+        False
+        >>> df.dropna().empty
+        True
+
+        See also
+        --------
+        pandas.Series.dropna
+        pandas.DataFrame.dropna
+        """
         return not all(len(self._get_axis(a)) > 0 for a in self._AXIS_ORDERS)
 
     def __nonzero__(self):
@@ -742,7 +898,7 @@ class NDFrame(PandasObject):
         v = self.squeeze()
         if isinstance(v, (bool, np.bool_)):
             return bool(v)
-        elif np.isscalar(v):
+        elif lib.isscalar(v):
             raise ValueError("bool cannot act on a non-boolean single element "
                              "{0}".format(self.__class__.__name__))
 
@@ -939,7 +1095,7 @@ class NDFrame(PandasObject):
         from pandas.io import pytables
         return pytables.to_hdf(path_or_buf, key, self, **kwargs)
 
-    def to_msgpack(self, path_or_buf=None, **kwargs):
+    def to_msgpack(self, path_or_buf=None, encoding='utf-8', **kwargs):
         """
         msgpack (serialize) object to input file path
 
@@ -957,7 +1113,8 @@ class NDFrame(PandasObject):
         """
 
         from pandas.io import packers
-        return packers.to_msgpack(path_or_buf, self, **kwargs)
+        return packers.to_msgpack(path_or_buf, self, encoding=encoding,
+                                  **kwargs)
 
     def to_sql(self, name, con, flavor='sqlite', schema=None, if_exists='fail',
                index=True, index_label=None, chunksize=None, dtype=None):
@@ -1038,6 +1195,103 @@ class NDFrame(PandasObject):
         """
         from pandas.io import clipboard
         clipboard.to_clipboard(self, excel=excel, sep=sep, **kwargs)
+
+    def to_xarray(self):
+        """
+        Return an xarray object from the pandas object.
+
+        Returns
+        -------
+        a DataArray for a Series
+        a Dataset for a DataFrame
+        a DataArray for higher dims
+
+        Examples
+        --------
+        >>> df = pd.DataFrame({'A' : [1, 1, 2],
+                               'B' : ['foo', 'bar', 'foo'],
+                               'C' : np.arange(4.,7)})
+        >>> df
+           A    B    C
+        0  1  foo  4.0
+        1  1  bar  5.0
+        2  2  foo  6.0
+
+        >>> df.to_xarray()
+        <xarray.Dataset>
+        Dimensions:  (index: 3)
+        Coordinates:
+          * index    (index) int64 0 1 2
+        Data variables:
+            A        (index) int64 1 1 2
+            B        (index) object 'foo' 'bar' 'foo'
+            C        (index) float64 4.0 5.0 6.0
+
+        >>> df = pd.DataFrame({'A' : [1, 1, 2],
+                               'B' : ['foo', 'bar', 'foo'],
+                               'C' : np.arange(4.,7)}
+                             ).set_index(['B','A'])
+        >>> df
+                 C
+        B   A
+        foo 1  4.0
+        bar 1  5.0
+        foo 2  6.0
+
+        >>> df.to_xarray()
+        <xarray.Dataset>
+        Dimensions:  (A: 2, B: 2)
+        Coordinates:
+          * B        (B) object 'bar' 'foo'
+          * A        (A) int64 1 2
+        Data variables:
+            C        (B, A) float64 5.0 nan 4.0 6.0
+
+        >>> p = pd.Panel(np.arange(24).reshape(4,3,2),
+                         items=list('ABCD'),
+                         major_axis=pd.date_range('20130101', periods=3),
+                         minor_axis=['first', 'second'])
+        >>> p
+        <class 'pandas.core.panel.Panel'>
+        Dimensions: 4 (items) x 3 (major_axis) x 2 (minor_axis)
+        Items axis: A to D
+        Major_axis axis: 2013-01-01 00:00:00 to 2013-01-03 00:00:00
+        Minor_axis axis: first to second
+
+        >>> p.to_xarray()
+        <xarray.DataArray (items: 4, major_axis: 3, minor_axis: 2)>
+        array([[[ 0,  1],
+                [ 2,  3],
+                [ 4,  5]],
+               [[ 6,  7],
+                [ 8,  9],
+                [10, 11]],
+               [[12, 13],
+                [14, 15],
+                [16, 17]],
+               [[18, 19],
+                [20, 21],
+                [22, 23]]])
+        Coordinates:
+          * items       (items) object 'A' 'B' 'C' 'D'
+          * major_axis  (major_axis) datetime64[ns] 2013-01-01 2013-01-02 2013-01-03  # noqa
+          * minor_axis  (minor_axis) object 'first' 'second'
+
+        Notes
+        -----
+        See the `xarray docs <http://xarray.pydata.org/en/stable/>`__
+        """
+        import xarray
+        if self.ndim == 1:
+            return xarray.DataArray.from_series(self)
+        elif self.ndim == 2:
+            return xarray.Dataset.from_dataframe(self)
+
+        # > 2 dims
+        coords = [(a, self._get_axis(a)) for a in self._AXIS_ORDERS]
+        return xarray.DataArray(self,
+                                coords=coords,
+                                )
 
     # ----------------------------------------------------------------------
     # Fancy Indexing
@@ -1496,10 +1750,10 @@ class NDFrame(PandasObject):
                 else:
                     return self.take(loc, axis=axis, convert=True)
 
-            if not np.isscalar(loc):
+            if not lib.isscalar(loc):
                 new_index = self.index[loc]
 
-        if np.isscalar(loc):
+        if lib.isscalar(loc):
             new_values = self._data.fast_xs(loc)
 
             # may need to box a datelike-scalar
@@ -1787,11 +2041,13 @@ class NDFrame(PandasObject):
             method to use for filling holes in reindexed DataFrame.
             Please note: this is only  applicable to DataFrames/Series with a
             monotonically increasing/decreasing index.
-              * default: don't fill gaps
-              * pad / ffill: propagate last valid observation forward to next
-                valid
-              * backfill / bfill: use next valid observation to fill gap
-              * nearest: use nearest valid observations to fill gap
+
+            * default: don't fill gaps
+            * pad / ffill: propagate last valid observation forward to next
+              valid
+            * backfill / bfill: use next valid observation to fill gap
+            * nearest: use nearest valid observations to fill gap
+
         copy : boolean, default True
             Return a new object, even if the passed indexes are the same
         level : int or name
@@ -2011,11 +2267,13 @@ class NDFrame(PandasObject):
         axis : %(axes_single_arg)s
         method : {None, 'backfill'/'bfill', 'pad'/'ffill', 'nearest'}, optional
             Method to use for filling holes in reindexed DataFrame:
-              * default: don't fill gaps
-              * pad / ffill: propagate last valid observation forward to next
-                valid
-              * backfill / bfill: use next valid observation to fill gap
-              * nearest: use nearest valid observations to fill gap
+
+            * default: don't fill gaps
+            * pad / ffill: propagate last valid observation forward to next
+              valid
+            * backfill / bfill: use next valid observation to fill gap
+            * nearest: use nearest valid observations to fill gap
+
         copy : boolean, default True
             Return a new object, even if the passed indexes are the same
         level : int or name
@@ -2865,7 +3123,7 @@ class NDFrame(PandasObject):
 
                 # fill in 2d chunks
                 result = dict([(col, s.fillna(method=method, value=value))
-                               for col, s in compat.iteritems(self)])
+                               for col, s in self.iteritems()])
                 return self._constructor.from_dict(result).__finalize__(self)
 
             # 2d or less
@@ -3678,57 +3936,18 @@ class NDFrame(PandasObject):
         Freq: 3T, dtype: int64
 
         """
-        from pandas.tseries.resample import resample
+        from pandas.tseries.resample import (resample,
+                                             _maybe_process_deprecations)
 
         axis = self._get_axis_number(axis)
         r = resample(self, freq=rule, label=label, closed=closed,
                      axis=axis, kind=kind, loffset=loffset,
-                     fill_method=fill_method, convention=convention,
-                     limit=limit, base=base)
-
-        # deprecation warnings
-        # but call methods anyhow
-
-        if how is not None:
-
-            # .resample(..., how='sum')
-            if isinstance(how, compat.string_types):
-                method = "{0}()".format(how)
-
-            # .resample(..., how=lambda x: ....)
-            else:
-                method = ".apply(<func>)"
-
-            # if we have both a how and fill_method, then show
-            # the following warning
-            if fill_method is None:
-                warnings.warn("how in .resample() is deprecated\n"
-                              "the new syntax is "
-                              ".resample(...).{method}".format(
-                                  method=method),
-                              FutureWarning, stacklevel=2)
-            r = r.aggregate(how)
-
-        if fill_method is not None:
-
-            # show the prior function call
-            method = '.' + method if how is not None else ''
-
-            args = "limit={0}".format(limit) if limit is not None else ""
-            warnings.warn("fill_method is deprecated to .resample()\n"
-                          "the new syntax is .resample(...){method}"
-                          ".{fill_method}({args})".format(
-                              method=method,
-                              fill_method=fill_method,
-                              args=args),
-                          FutureWarning, stacklevel=2)
-
-            if how is not None:
-                r = getattr(r, fill_method)(limit=limit)
-            else:
-                r = r.aggregate(fill_method, limit=limit)
-
-        return r
+                     convention=convention,
+                     base=base)
+        return _maybe_process_deprecations(r,
+                                           how=how,
+                                           fill_method=fill_method,
+                                           limit=limit)
 
     def first(self, offset):
         """
@@ -3741,7 +3960,7 @@ class NDFrame(PandasObject):
 
         Examples
         --------
-        ts.last('10D') -> First 10 days
+        ts.first('10D') -> First 10 days
 
         Returns
         -------
@@ -4622,27 +4841,28 @@ class NDFrame(PandasObject):
         def describe_categorical_1d(data):
             names = ['count', 'unique']
             objcounts = data.value_counts()
-            result = [data.count(), len(objcounts[objcounts != 0])]
+            count_unique = len(objcounts[objcounts != 0])
+            result = [data.count(), count_unique]
             if result[1] > 0:
                 top, freq = objcounts.index[0], objcounts.iloc[0]
 
-                if (data.dtype == object or
-                        com.is_categorical_dtype(data.dtype)):
-                    names += ['top', 'freq']
-                    result += [top, freq]
-
-                elif com.is_datetime64_dtype(data):
+                if com.is_datetime64_dtype(data):
                     asint = data.dropna().values.view('i8')
                     names += ['top', 'freq', 'first', 'last']
                     result += [lib.Timestamp(top), freq,
                                lib.Timestamp(asint.min()),
                                lib.Timestamp(asint.max())]
+                else:
+                    names += ['top', 'freq']
+                    result += [top, freq]
 
             return self._constructor_sliced(
                 result, index=names, name=data.name)
 
         def describe_1d(data, percentiles):
-            if com.is_numeric_dtype(data):
+            if com.is_bool_dtype(data):
+                return describe_categorical_1d(data)
+            elif com.is_numeric_dtype(data):
                 return describe_numeric_1d(data, percentiles)
             elif com.is_timedelta64_dtype(data):
                 return describe_numeric_1d(data, percentiles)
@@ -4654,7 +4874,7 @@ class NDFrame(PandasObject):
         elif (include is None) and (exclude is None):
             if len(self._get_numeric_data()._info_axis) > 0:
                 # when some numerics are found, keep only numerics
-                data = self.select_dtypes(include=[np.number, np.bool])
+                data = self.select_dtypes(include=[np.number])
             else:
                 data = self
         elif include == 'all':
@@ -4675,7 +4895,7 @@ class NDFrame(PandasObject):
                     names.append(name)
         d = pd.concat(ldesc, join_axes=pd.Index([names]), axis=1)
         d.columns.names = data.columns.names
-        return self._constructor(d)
+        return d
 
     def _check_percentile(self, q):
         """Validate percentiles (used by describe and quantile)."""
@@ -4912,11 +5132,12 @@ class NDFrame(PandasObject):
         cls.expanding = expanding
 
         @Appender(rwindow.ewm.__doc__)
-        def ewm(self, com=None, span=None, halflife=None, min_periods=0,
-                freq=None, adjust=True, ignore_na=False, axis=0):
+        def ewm(self, com=None, span=None, halflife=None, alpha=None,
+                min_periods=0, freq=None, adjust=True, ignore_na=False,
+                axis=0):
             axis = self._get_axis_number(axis)
             return rwindow.ewm(self, com=com, span=span, halflife=halflife,
-                               min_periods=min_periods, freq=freq,
+                               alpha=alpha, min_periods=min_periods, freq=freq,
                                adjust=adjust, ignore_na=ignore_na, axis=axis)
 
         cls.ewm = ewm
@@ -5011,12 +5232,29 @@ Returns
 %(outname)s : %(name1)s\n"""
 
 
+def _validate_kwargs(fname, kwargs, *compat_args):
+    """
+    Checks whether parameters passed to the
+    **kwargs argument in a 'stat' function 'fname'
+    are valid parameters as specified in *compat_args
+
+    """
+    list(map(kwargs.__delitem__, filter(
+        kwargs.__contains__, compat_args)))
+    if kwargs:
+        bad_arg = list(kwargs)[0]  # first 'key' element
+        raise TypeError(("{fname}() got an unexpected "
+                         "keyword argument '{arg}'".
+                         format(fname=fname, arg=bad_arg)))
+
+
 def _make_stat_function(name, name1, name2, axis_descr, desc, f):
     @Substitution(outname=name, desc=desc, name1=name1, name2=name2,
                   axis_descr=axis_descr)
     @Appender(_num_doc)
     def stat_func(self, axis=None, skipna=None, level=None, numeric_only=None,
                   **kwargs):
+        _validate_kwargs(name, kwargs, 'out', 'dtype')
         if skipna is None:
             skipna = True
         if axis is None:
@@ -5037,6 +5275,7 @@ def _make_stat_function_ddof(name, name1, name2, axis_descr, desc, f):
     @Appender(_num_ddof_doc)
     def stat_func(self, axis=None, skipna=None, level=None, ddof=1,
                   numeric_only=None, **kwargs):
+        _validate_kwargs(name, kwargs, 'out', 'dtype')
         if skipna is None:
             skipna = True
         if axis is None:
@@ -5058,6 +5297,7 @@ def _make_cum_function(name, name1, name2, axis_descr, desc, accum_func,
     @Appender("Return cumulative {0} over requested axis.".format(name) +
               _cnum_doc)
     def func(self, axis=None, dtype=None, out=None, skipna=True, **kwargs):
+        _validate_kwargs(name, kwargs, 'out', 'dtype')
         if axis is None:
             axis = self._stat_axis_number
         else:
@@ -5092,6 +5332,7 @@ def _make_logical_function(name, name1, name2, axis_descr, desc, f):
     @Appender(_bool_doc)
     def logical_func(self, axis=None, bool_only=None, skipna=None, level=None,
                      **kwargs):
+        _validate_kwargs(name, kwargs, 'out', 'dtype')
         if skipna is None:
             skipna = True
         if axis is None:

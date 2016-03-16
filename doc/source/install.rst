@@ -225,7 +225,7 @@ Recommended Dependencies
 
 * `numexpr <https://github.com/pydata/numexpr>`__: for accelerating certain numerical operations.
   ``numexpr`` uses multiple cores as well as smart chunking and caching to achieve large speedups.
-  If installed, must be Version 2.1 or higher. Version 2.4.6 or higher on Windows is highly recommended.
+  If installed, must be Version 2.1 or higher (excluding a buggy 2.4.4). Version 2.4.6 or higher is highly recommended.
 
 * `bottleneck <http://berkeleyanalytics.com/bottleneck>`__: for accelerating certain types of ``nan``
   evaluations. ``bottleneck`` uses specialized cython routines to achieve large speedups.
@@ -244,6 +244,7 @@ Optional Dependencies
 * `Cython <http://www.cython.org>`__: Only necessary to build development
   version. Version 0.19.1 or higher.
 * `SciPy <http://www.scipy.org>`__: miscellaneous statistical functions
+* `xarray <http://xarray.readthedocs.org>`__: pandas like handling for > 2 dims, needed for converting Panels to xarray objects. Version 0.7.0 or higher is recommended.
 * `PyTables <http://www.pytables.org>`__: necessary for HDF5-based storage. Version 3.0.0 or higher required, Version 3.2.1 or higher highly recommended.
 * `SQLAlchemy <http://www.sqlalchemy.org>`__: for SQL database support. Version 0.8.1 or higher recommended. Besides SQLAlchemy, you also need a database specific driver. You can find an overview of supported drivers for each SQL dialect in the `SQLAlchemy docs <http://docs.sqlalchemy.org/en/latest/dialects/index.html>`__. Some common drivers are:
 
@@ -252,7 +253,6 @@ Optional Dependencies
     - `SQLite <https://docs.python.org/3.5/library/sqlite3.html>`__: for SQLite, this is included in Python's standard library by default.
 
 * `matplotlib <http://matplotlib.sourceforge.net/>`__: for plotting
-* `statsmodels <http://statsmodels.sourceforge.net/>`__: Needed for parts of :mod:`pandas.stats`
 * `openpyxl <http://packages.python.org/openpyxl/>`__, `xlrd/xlwt <http://www.python-excel.org/>`__: Needed for Excel I/O
 * `XlsxWriter <https://pypi.python.org/pypi/XlsxWriter>`__: Alternative Excel writer
 * `Jinja2 <http://jinja.pocoo.org/>`__: Template engine for conditional HTML formatting.
@@ -266,9 +266,11 @@ Optional Dependencies
   <http://www.vergenet.net/~conrad/software/xsel/>`__, or `xclip
   <http://sourceforge.net/projects/xclip/>`__: necessary to use
   :func:`~pandas.io.clipboard.read_clipboard`. Most package managers on Linux distributions will have ``xclip`` and/or ``xsel`` immediately available for installation.
-* Google's `python-gflags <http://code.google.com/p/python-gflags/>`__
-  and `google-api-python-client <http://github.com/google/google-api-python-client>`__: Needed for :mod:`~pandas.io.gbq`
-* `httplib2 <http://pypi.python.org/pypi/httplib2>`__: Needed for :mod:`~pandas.io.gbq`
+* Google's `python-gflags <http://code.google.com/p/python-gflags/>`__ ,
+  `oauth2client <https://github.com/google/oauth2client>`__ ,
+  `httplib2 <http://pypi.python.org/pypi/httplib2>`__
+  and `google-api-python-client <http://github.com/google/google-api-python-client>`__
+  : Needed for :mod:`~pandas.io.gbq`
 * One of the following combinations of libraries is needed to use the
   top-level :func:`~pandas.io.html.read_html` function:
 

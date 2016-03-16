@@ -122,6 +122,45 @@ class NoseTester(nosetester.NoseTester):
         """
         return None
 
+    def _test_argv(self, label, verbose, extra_argv):
+        """
+        Generate argv for nosetest command
+
+        Parameters
+        ----------
+        label : {'fast', 'full', '', attribute identifier}, optional
+            see ``test`` docstring
+        verbose : int, optional
+            Verbosity value for test outputs, in the range 1-10. Default is 1.
+        extra_argv : list, optional
+            List with any extra arguments to pass to nosetests.
+
+        Returns
+        -------
+        argv : list
+            command line arguments that will be passed to nose
+        """
+
+        argv = [__file__, self.package_path]
+        if label and label != 'full':
+            if not isinstance(label, string_types):
+                raise TypeError('Selection label should be a string')
+            if label == 'fast':
+                label = 'not slow and not network and not disabled'
+            argv += ['-A', label]
+        argv += ['--verbosity', str(verbose)]
+
+        # When installing with setuptools, and also in some other cases, the
+        # test_*.py files end up marked +x executable. Nose, by default, does
+        # not run files marked with +x as they might be scripts. However, in
+        # our case nose only looks for test_*.py files under the package
+        # directory, which should be safe.
+        argv += ['--exe']
+
+        if extra_argv:
+            argv += extra_argv
+        return argv
+
     def test(self, label='fast', verbose=1, extra_argv=None,
              doctests=False, coverage=False, raise_warnings=None):
         """
@@ -133,6 +172,7 @@ class NoseTester(nosetester.NoseTester):
             Identifies the tests to run. This can be a string to pass to
             the nosetests executable with the '-A' option, or one of several
             special values.  Special values are:
+
             * 'fast' - the default - which corresponds to the ``nosetests -A``
               option of 'not slow'.
             * 'full' - fast (as above) and slow tests as in the
@@ -140,6 +180,7 @@ class NoseTester(nosetester.NoseTester):
             * None or '' - run all tests.
             * attribute_identifier - string passed directly to nosetests
               as '-A'.
+
         verbose : int, optional
             Verbosity value for test outputs, in the range 1-10. Default is 1.
         extra_argv : list, optional
@@ -154,14 +195,15 @@ class NoseTester(nosetester.NoseTester):
             This specifies which warnings to configure as 'raise' instead
             of 'warn' during the test execution.  Valid strings are:
 
-            - "develop" : equals ``(DeprecationWarning, RuntimeWarning)``
-            - "release" : equals ``()``, don't raise on any warnings.
+            - 'develop' : equals ``(DeprecationWarning, RuntimeWarning)``
+            - 'release' : equals ``()``, don't raise on any warnings.
 
         Returns
         -------
         result : object
             Returns the result of running the tests as a
             ``nose.result.TextTestResult`` object.
+
         """
 
         # cap verbosity at 3 because nose becomes *very* verbose beyond that

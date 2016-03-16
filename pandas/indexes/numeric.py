@@ -7,6 +7,7 @@ from pandas import compat
 from pandas.indexes.base import Index, InvalidIndexError
 from pandas.util.decorators import Appender, cache_readonly
 import pandas.core.common as com
+from pandas.core.common import is_dtype_equal, isnull
 import pandas.indexes.base as ibase
 
 
@@ -29,7 +30,7 @@ class NumericIndex(Index):
         ----------
         label : object
         side : {'left', 'right'}
-        kind : string / None
+        kind : {'ix', 'loc', 'getitem'}
 
         Returns
         -------
@@ -40,13 +41,10 @@ class NumericIndex(Index):
         Value of `side` parameter should be validated in caller.
 
         """
+        assert kind in ['ix', 'loc', 'getitem', None]
 
-        # we are a numeric index, so we accept
-        # integer/floats directly
-        if not (com.is_integer(label) or com.is_float(label)):
-            self._invalid_indexer('slice', label)
-
-        return label
+        # we will try to coerce to integers
+        return self._maybe_cast_indexer(label)
 
     def _convert_tolerance(self, tolerance):
         try:
@@ -135,6 +133,24 @@ class Int64Index(NumericIndex):
         """
         return False
 
+    def _convert_scalar_indexer(self, key, kind=None):
+        """
+        convert a scalar indexer
+
+        Parameters
+        ----------
+        key : label of the slice bound
+        kind : {'ix', 'loc', 'getitem'} or None
+        """
+
+        assert kind in ['ix', 'loc', 'getitem', 'iloc', None]
+
+        # don't coerce ilocs to integers
+        if kind != 'iloc':
+            key = self._maybe_cast_indexer(key)
+        return (super(Int64Index, self)
+                ._convert_scalar_indexer(key, kind=kind))
+
     def equals(self, other):
         """
         Determines if two Index objects contain the same elements.
@@ -200,6 +216,18 @@ class Float64Index(NumericIndex):
 
         if dtype is None:
             dtype = np.float64
+        dtype = np.dtype(dtype)
+
+        # allow integer / object dtypes to be passed, but coerce to float64
+        if dtype.kind in ['i', 'O']:
+            dtype = np.float64
+
+        elif dtype.kind in ['f']:
+            pass
+
+        else:
+            raise TypeError("cannot support {0} dtype in "
+                            "Float64Index".format(dtype))
 
         try:
             subarr = np.array(data, dtype=dtype, copy=copy)
@@ -230,18 +258,13 @@ class Float64Index(NumericIndex):
         Parameters
         ----------
         key : label of the slice bound
-        kind : optional, type of the indexing operation (loc/ix/iloc/None)
-
-        right now we are converting
-        floats -> ints if the index supports it
+        kind : {'ix', 'loc', 'getitem'} or None
         """
 
-        if kind == 'iloc':
-            if com.is_integer(key):
-                return key
+        assert kind in ['ix', 'loc', 'getitem', 'iloc', None]
 
-            return (super(Float64Index, self)
-                    ._convert_scalar_indexer(key, kind=kind))
+        if kind == 'iloc':
+            return self._validate_indexer('positional', key, kind)
 
         return key
 
@@ -265,19 +288,20 @@ class Float64Index(NumericIndex):
                                                                     kind=kind)
 
         # translate to locations
-        return self.slice_indexer(key.start, key.stop, key.step)
+        return self.slice_indexer(key.start, key.stop, key.step, kind=kind)
 
     def _format_native_types(self, na_rep='', float_format=None, decimal='.',
                              quoting=None, **kwargs):
         from pandas.core.format import FloatArrayFormatter
         formatter = FloatArrayFormatter(self.values, na_rep=na_rep,
                                         float_format=float_format,
-                                        decimal=decimal, quoting=quoting)
-        return formatter.get_formatted_data()
+                                        decimal=decimal, quoting=quoting,
+                                        fixed_width=False)
+        return formatter.get_result_as_array()
 
     def get_value(self, series, key):
         """ we always want to get an index value, never a value """
-        if not np.isscalar(key):
+        if not lib.isscalar(key):
             raise InvalidIndexError
 
         from pandas.core.indexing import maybe_droplevels
@@ -287,7 +311,7 @@ class Float64Index(NumericIndex):
         loc = self.get_loc(k)
         new_values = com._values_from_object(series)[loc]
 
-        if np.isscalar(new_values) or new_values is None:
+        if lib.isscalar(new_values) or new_values is None:
             return new_values
 
         new_index = self[loc]
@@ -306,7 +330,7 @@ class Float64Index(NumericIndex):
         try:
             if not isinstance(other, Float64Index):
                 other = self._constructor(other)
-            if (not com.is_dtype_equal(self.dtype, other.dtype) or
+            if (not is_dtype_equal(self.dtype, other.dtype) or
                     self.shape != other.shape):
                 return False
             left, right = self._values, other._values
@@ -362,7 +386,7 @@ class Float64Index(NumericIndex):
         if level is not None:
             self._validate_index_level(level)
         return lib.ismember_nans(np.array(self), value_set,
-                                 com.isnull(list(value_set)).any())
+                                 isnull(list(value_set)).any())
 
 
 Float64Index._add_numeric_methods()

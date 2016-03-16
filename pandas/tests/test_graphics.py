@@ -17,7 +17,9 @@ from pandas.compat import (range, lrange, StringIO, lmap, lzip, u, zip,
 from pandas.util.decorators import cache_readonly
 import pandas.core.common as com
 import pandas.util.testing as tm
-from pandas.util.testing import ensure_clean
+from pandas.util.testing import (ensure_clean,
+                                 assert_is_valid_plot_return_object)
+
 from pandas.core.config import set_option
 
 import numpy as np
@@ -60,8 +62,8 @@ class TestPlotBase(tm.TestCase):
 
         n = 100
         with tm.RNGContext(42):
-            gender = tm.choice(['Male', 'Female'], size=n)
-            classroom = tm.choice(['A', 'B', 'C'], size=n)
+            gender = np.random.choice(['Male', 'Female'], size=n)
+            classroom = np.random.choice(['A', 'B', 'C'], size=n)
 
             self.hist_df = DataFrame({'gender': gender,
                                       'classroom': classroom,
@@ -1269,6 +1271,15 @@ class TestSeriesPlots(TestPlotBase):
         ax = s.plot(xticks=[0, 3, 5, 9])
         exp = ['P%02d' % i for i in [0, 3, 5, 9]]
         self._check_text_labels(ax.get_xticklabels(), exp)
+
+    def test_custom_business_day_freq(self):
+        # GH7222
+        from pandas.tseries.offsets import CustomBusinessDay
+        s = Series(range(100, 121), index=pd.bdate_range(
+            start='2014-05-01', end='2014-06-01',
+            freq=CustomBusinessDay(holidays=['2014-05-26'])))
+
+        _check_plot_works(s.plot)
 
 
 @tm.mplskip
@@ -3774,9 +3785,15 @@ class TestDataFramePlots(TestPlotBase):
             plotting._dataframe_kinds, kws={'x': 'a', 'y': 'b'})
 
     def test_option_mpl_style(self):
-        set_option('display.mpl_style', 'default')
-        set_option('display.mpl_style', None)
-        set_option('display.mpl_style', False)
+        with tm.assert_produces_warning(FutureWarning,
+                                        check_stacklevel=False):
+            set_option('display.mpl_style', 'default')
+        with tm.assert_produces_warning(FutureWarning,
+                                        check_stacklevel=False):
+            set_option('display.mpl_style', None)
+        with tm.assert_produces_warning(FutureWarning,
+                                        check_stacklevel=False):
+            set_option('display.mpl_style', False)
 
         with tm.assertRaises(ValueError):
             set_option('display.mpl_style', 'default2')
@@ -3846,7 +3863,7 @@ class TestDataFrameGroupByPlots(TestPlotBase):
         weight = Series(np.random.normal(166, 20, size=n))
         height = Series(np.random.normal(60, 10, size=n))
         with tm.RNGContext(42):
-            gender = tm.choice(['male', 'female'], size=n)
+            gender = np.random.choice(['male', 'female'], size=n)
 
         weight.groupby(gender).plot()
         tm.close()
@@ -3899,21 +3916,6 @@ class TestDataFrameGroupByPlots(TestPlotBase):
 
         res = df.groupby('z').plot.scatter(x='x', y='y')
         self.assertEqual(len(res['a'].collections), 1)
-
-
-def assert_is_valid_plot_return_object(objs):
-    import matplotlib.pyplot as plt
-    if isinstance(objs, np.ndarray):
-        for el in objs.flat:
-            assert isinstance(el, plt.Axes), ('one of \'objs\' is not a '
-                                              'matplotlib Axes instance, '
-                                              'type encountered {0!r}'
-                                              ''.format(el.__class__.__name__))
-    else:
-        assert isinstance(objs, (plt.Artist, tuple, dict)), \
-            ('objs is neither an ndarray of Artist instances nor a '
-             'single Artist instance, tuple, or dict, "objs" is a {0!r} '
-             ''.format(objs.__class__.__name__))
 
 
 def _check_plot_works(f, filterwarnings='always', **kwargs):

@@ -1,5 +1,10 @@
 #!/bin/bash
 
+if [ "${TRAVIS_OS_NAME}" != "linux" ]; then
+   echo "not doing build_docs on non-linux"
+   exit 0
+fi
+
 cd "$TRAVIS_BUILD_DIR"
 echo "inside $0"
 
@@ -19,7 +24,7 @@ if [ x"$DOC_BUILD" != x"" ]; then
     source activate pandas
     conda install -n pandas -c r r rpy2 --yes
 
-    time sudo apt-get $APT_ARGS install dvipng
+    time sudo apt-get $APT_ARGS install dvipng texlive-latex-base texlive-latex-extra
 
     mv "$TRAVIS_BUILD_DIR"/doc /tmp
     cd /tmp/doc
@@ -30,6 +35,10 @@ if [ x"$DOC_BUILD" != x"" ]; then
 
     echo ./make.py
     ./make.py
+
+    echo ########################
+    echo # Create and send docs #
+    echo ########################
 
     cd /tmp/doc/build/html
     git config --global user.email "pandas-docs-bot@localhost.foo"

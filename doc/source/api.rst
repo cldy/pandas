@@ -526,6 +526,7 @@ strings and apply several methods to it. These can be accessed like
    Series.str.encode
    Series.str.endswith
    Series.str.extract
+   Series.str.extractall
    Series.str.find
    Series.str.findall
    Series.str.get
@@ -683,6 +684,7 @@ Serialization / IO / Conversion
    Series.to_csv
    Series.to_dict
    Series.to_frame
+   Series.to_xarray
    Series.to_hdf
    Series.to_sql
    Series.to_msgpack
@@ -917,6 +919,7 @@ Reshaping, sorting, transposing
    DataFrame.unstack
    DataFrame.T
    DataFrame.to_panel
+   DataFrame.to_xarray
    DataFrame.transpose
 
 Combining / joining / merging
@@ -1212,9 +1215,9 @@ Serialization / IO / Conversion
    Panel.to_pickle
    Panel.to_excel
    Panel.to_hdf
-   Panel.to_json
    Panel.to_sparse
    Panel.to_frame
+   Panel.to_xarray
    Panel.to_clipboard
 
 .. _api.panel4d:
@@ -1228,6 +1231,13 @@ Constructor
    :toctree: generated/
 
    Panel4D
+
+Serialization / IO / Conversion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   Panel4D.to_xarray
 
 Attributes and underlying data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1683,16 +1693,18 @@ application to columns of a specific data type.
 .. autosummary::
    :toctree: generated/
 
+   DataFrameGroupBy.agg
+   DataFrameGroupBy.all
+   DataFrameGroupBy.any
    DataFrameGroupBy.bfill
+   DataFrameGroupBy.corr
+   DataFrameGroupBy.count
+   DataFrameGroupBy.cov
    DataFrameGroupBy.cummax
    DataFrameGroupBy.cummin
    DataFrameGroupBy.cumprod
    DataFrameGroupBy.cumsum
    DataFrameGroupBy.describe
-   DataFrameGroupBy.all
-   DataFrameGroupBy.any
-   DataFrameGroupBy.corr
-   DataFrameGroupBy.cov
    DataFrameGroupBy.diff
    DataFrameGroupBy.ffill
    DataFrameGroupBy.fillna
@@ -1706,6 +1718,7 @@ application to columns of a specific data type.
    DataFrameGroupBy.rank
    DataFrameGroupBy.resample
    DataFrameGroupBy.shift
+   DataFrameGroupBy.size
    DataFrameGroupBy.skew
    DataFrameGroupBy.take
    DataFrameGroupBy.tshift
@@ -1809,6 +1822,7 @@ Style Application
 
    Styler.apply
    Styler.applymap
+   Styler.format
    Styler.set_precision
    Styler.set_table_styles
    Styler.set_caption

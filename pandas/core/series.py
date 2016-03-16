@@ -8,6 +8,7 @@ from __future__ import division
 
 import types
 import warnings
+from collections import MutableMapping
 
 from numpy import nan, ndarray
 import numpy as np
@@ -177,7 +178,8 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
                                                      default=np.nan)
                         else:
                             data = np.nan
-                    elif isinstance(index, PeriodIndex):
+                    # GH #12169
+                    elif isinstance(index, (PeriodIndex, TimedeltaIndex)):
                         data = ([data.get(i, nan) for i in index]
                                 if data else np.nan)
                     else:
@@ -561,7 +563,7 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         try:
             result = self.index.get_value(self, key)
 
-            if not np.isscalar(result):
+            if not lib.isscalar(result):
                 if is_list_like(result) and not isinstance(result, Series):
 
                     # we need to box if we have a non-unique index here
@@ -1113,6 +1115,20 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         return SparseSeries(self, kind=kind,
                             fill_value=fill_value).__finalize__(self)
 
+    def _set_name(self, name, inplace=False):
+        '''
+        Set the Series name.
+
+        Parameters
+        ----------
+        name : str
+        inplace : bool
+            whether to modify `self` directly or return a copy
+        '''
+        ser = self if inplace else self.copy()
+        ser.name = name
+        return ser
+
     # ----------------------------------------------------------------------
     # Statistics, overridden ndarray methods
 
@@ -1277,8 +1293,10 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
             0 <= q <= 1, the quantile(s) to compute
         interpolation : {'linear', 'lower', 'higher', 'midpoint', 'nearest'}
             .. versionadded:: 0.18.0
+
             This optional parameter specifies the interpolation method to use,
             when the desired quantile lies between two data points `i` and `j`:
+
                 * linear: `i + (j - i) * fraction`, where `fraction` is the
                   fractional part of the index surrounded by `i` and `j`.
                 * lower: `i`.
@@ -1294,15 +1312,15 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
 
         Examples
         --------
-
         >>> s = Series([1, 2, 3, 4])
         >>> s.quantile(.5)
-            2.5
+        2.5
         >>> s.quantile([.25, .5, .75])
         0.25    1.75
         0.50    2.50
         0.75    3.25
         dtype: float64
+
         """
 
         self._check_percentile(q)
@@ -2322,6 +2340,12 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
 
     @Appender(generic._shared_docs['rename'] % _shared_doc_kwargs)
     def rename(self, index=None, **kwargs):
+        is_scalar_or_list = (
+            (not com.is_sequence(index) and not callable(index)) or
+            (com.is_list_like(index) and not isinstance(index, MutableMapping))
+        )
+        if is_scalar_or_list:
+            return self._set_name(index, inplace=kwargs.get('inplace'))
         return super(Series, self).rename(index=index, **kwargs)
 
     @Appender(generic._shared_docs['reindex'] % _shared_doc_kwargs)
@@ -2913,6 +2937,8 @@ def _sanitize_array(data, index, dtype=None, copy=False,
 
         if is_datetimetz(dtype):
             subarr = DatetimeIndex([value] * len(index), dtype=dtype)
+        elif is_categorical_dtype(dtype):
+            subarr = Categorical([value] * len(index))
         else:
             if not isinstance(dtype, (np.dtype, type(np.dtype))):
                 dtype = dtype.dtype

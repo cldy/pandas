@@ -163,7 +163,6 @@ def factorize(values, sort=False, order=None, na_sentinel=-1, size_hint=None):
         Sequence
     sort : boolean, default False
         Sort by values
-    order : deprecated
     na_sentinel : int, default -1
         Value to mark "not found"
     size_hint : hint to the hashtable sizer
@@ -178,11 +177,6 @@ def factorize(values, sort=False, order=None, na_sentinel=-1, size_hint=None):
     note: an array of Periods will ignore sort as it returns an always sorted
     PeriodIndex
     """
-    if order is not None:
-        msg = "order is deprecated. See " \
-              "https://github.com/pydata/pandas/issues/6926"
-        warn(msg, FutureWarning, stacklevel=2)
-
     from pandas import Index, Series, DatetimeIndex
 
     vals = np.asarray(values)
@@ -348,7 +342,7 @@ def value_counts(values, sort=True, ascending=False, normalize=False,
         result = result.sort_values(ascending=ascending)
 
     if normalize:
-        result = result / float(values.size)
+        result = result / float(counts.sum())
 
     return result
 
@@ -474,7 +468,7 @@ def quantile(x, q, interpolation_method='fraction'):
 
         return score
 
-    if np.isscalar(q):
+    if lib.isscalar(q):
         return _get_score(q)
     else:
         q = np.asarray(q, np.float64)

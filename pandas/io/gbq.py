@@ -50,7 +50,6 @@ def _test_google_api_imports():
         from apiclient.errors import HttpError  # noqa
         from oauth2client.client import AccessTokenRefreshError  # noqa
         from oauth2client.client import OAuth2WebServerFlow  # noqa
-        from oauth2client.client import SignedJwtAssertionCredentials  # noqa
         from oauth2client.file import Storage  # noqa
         from oauth2client.tools import run_flow, argparser  # noqa
     except ImportError as e:
@@ -179,7 +178,30 @@ class GbqConnector(object):
         return credentials
 
     def get_service_account_credentials(self):
-        from oauth2client.client import SignedJwtAssertionCredentials
+        # Bug fix for https://github.com/pydata/pandas/issues/12572
+        # We need to know that a supported version of oauth2client is installed
+        # Test that either of the following is installed:
+        # - SignedJwtAssertionCredentials from oauth2client.client
+        # - ServiceAccountCredentials from oauth2client.service_account
+        # SignedJwtAssertionCredentials is available in oauthclient < 2.0.0
+        # ServiceAccountCredentials is available in oauthclient >= 2.0.0
+        oauth2client_v1 = True
+        oauth2client_v2 = True
+
+        try:
+            from oauth2client.client import SignedJwtAssertionCredentials
+        except ImportError:
+            oauth2client_v1 = False
+
+        try:
+            from oauth2client.service_account import ServiceAccountCredentials
+        except ImportError:
+            oauth2client_v2 = False
+
+        if not oauth2client_v1 and not oauth2client_v2:
+            raise ImportError("Missing oauth2client required for BigQuery "
+                              "service account support")
+
         from os.path import isfile
 
         try:
@@ -197,11 +219,16 @@ class GbqConnector(object):
                 json_key['private_key'] = bytes(
                     json_key['private_key'], 'UTF-8')
 
-            return SignedJwtAssertionCredentials(
-                json_key['client_email'],
-                json_key['private_key'],
-                self.scope,
-            )
+            if oauth2client_v1:
+                return SignedJwtAssertionCredentials(
+                    json_key['client_email'],
+                    json_key['private_key'],
+                    self.scope,
+                )
+            else:
+                return ServiceAccountCredentials.from_json_keyfile_dict(
+                    json_key,
+                    self.scope)
         except (KeyError, ValueError, TypeError, AttributeError):
             raise InvalidPrivateKeyFormat(
                 "Private key is missing or invalid. It should be service "
@@ -525,12 +552,18 @@ def read_gbq(query, project_id=None, index_col=None, col_order=None,
 
     THIS IS AN EXPERIMENTAL LIBRARY
 
-    The main method a user calls to execute a Query in Google BigQuery and read
-    results into a pandas DataFrame using the v2 Google API client for Python.
-    Documentation for the API is available at
-    https://developers.google.com/api-client-library/python/.  Authentication
-    to the Google BigQuery service is via OAuth 2.0 using the product name
-    'pandas GBQ'.
+    The main method a user calls to execute a Query in Google BigQuery
+    and read results into a pandas DataFrame.
+
+    Google BigQuery API Client Library v2 for Python is used.
+    Documentation is available at
+    https://developers.google.com/api-client-library/python/apis/bigquery/v2
+
+    Authentication to the Google BigQuery service is via OAuth 2.0.
+    By default user account credentials are used. You will be asked to
+    grant permissions for product name 'pandas GBQ'. It is also posible
+    to authenticate via service account credentials by using
+    private_key parameter.
 
     Parameters
     ----------
@@ -614,6 +647,19 @@ def to_gbq(dataframe, destination_table, project_id, chunksize=10000,
     """Write a DataFrame to a Google BigQuery table.
 
     THIS IS AN EXPERIMENTAL LIBRARY
+
+    The main method a user calls to export pandas DataFrame contents to
+    Google BigQuery table.
+
+    Google BigQuery API Client Library v2 for Python is used.
+    Documentation is available at
+    https://developers.google.com/api-client-library/python/apis/bigquery/v2
+
+    Authentication to the Google BigQuery service is via OAuth 2.0.
+    By default user account credentials are used. You will be asked to
+    grant permissions for product name 'pandas GBQ'. It is also posible
+    to authenticate via service account credentials by using
+    private_key parameter.
 
     Parameters
     ----------

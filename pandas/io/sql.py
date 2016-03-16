@@ -5,7 +5,7 @@ retrieval and to reduce dependency on DB-specific API.
 """
 
 from __future__ import print_function, division
-from datetime import datetime, date
+from datetime import datetime, date, time
 
 import warnings
 import traceback
@@ -21,7 +21,6 @@ from pandas.core.common import isnull
 from pandas.core.base import PandasObject
 from pandas.core.dtypes import DatetimeTZDtype
 from pandas.tseries.tools import to_datetime
-from pandas.util.decorators import Appender
 
 from contextlib import contextmanager
 
@@ -1404,6 +1403,15 @@ class SQLiteTable(SQLTable):
     Instead of a table variable just use the Create Table statement.
     """
 
+    def __init__(self, *args, **kwargs):
+        # GH 8341
+        # register an adapter callable for datetime.time object
+        import sqlite3
+        # this will transform time(12,34,56,789) into '12:34:56.000789'
+        # (this is what sqlalchemy does)
+        sqlite3.register_adapter(time, lambda _: _.strftime("%H:%M:%S.%f"))
+        super(SQLiteTable, self).__init__(*args, **kwargs)
+
     def sql_schema(self):
         return str(";\n".join(self.table))
 
@@ -1704,66 +1712,3 @@ def get_schema(frame, name, flavor='sqlite', keys=None, con=None, dtype=None):
 
     pandas_sql = pandasSQL_builder(con=con, flavor=flavor)
     return pandas_sql._create_sql_schema(frame, name, keys=keys, dtype=dtype)
-
-
-# legacy names, with depreciation warnings and copied docs
-
-@Appender(read_sql.__doc__, join='\n')
-def read_frame(*args, **kwargs):
-    """DEPRECATED - use read_sql
-    """
-    warnings.warn("read_frame is deprecated, use read_sql", FutureWarning,
-                  stacklevel=2)
-    return read_sql(*args, **kwargs)
-
-
-@Appender(read_sql.__doc__, join='\n')
-def frame_query(*args, **kwargs):
-    """DEPRECATED - use read_sql
-    """
-    warnings.warn("frame_query is deprecated, use read_sql", FutureWarning,
-                  stacklevel=2)
-    return read_sql(*args, **kwargs)
-
-
-def write_frame(frame, name, con, flavor='sqlite', if_exists='fail', **kwargs):
-    """DEPRECATED - use to_sql
-
-    Write records stored in a DataFrame to a SQL database.
-
-    Parameters
-    ----------
-    frame : DataFrame
-    name : string
-    con : DBAPI2 connection
-    flavor : {'sqlite', 'mysql'}, default 'sqlite'
-        The flavor of SQL to use.
-    if_exists : {'fail', 'replace', 'append'}, default 'fail'
-        - fail: If table exists, do nothing.
-        - replace: If table exists, drop it, recreate it, and insert data.
-        - append: If table exists, insert data. Create if does not exist.
-    index : boolean, default False
-        Write DataFrame index as a column
-
-    Notes
-    -----
-    This function is deprecated in favor of ``to_sql``. There are however
-    two differences:
-
-    - With ``to_sql`` the index is written to the sql database by default. To
-      keep the behaviour this function you need to specify ``index=False``.
-    - The new ``to_sql`` function supports sqlalchemy connectables to work
-      with different sql flavors.
-
-    See also
-    --------
-    pandas.DataFrame.to_sql
-
-    """
-    warnings.warn("write_frame is deprecated, use to_sql", FutureWarning,
-                  stacklevel=2)
-
-    # for backwards compatibility, set index=False when not specified
-    index = kwargs.pop('index', False)
-    return to_sql(frame, name, con, flavor=flavor, if_exists=if_exists,
-                  index=index, **kwargs)

@@ -130,6 +130,8 @@ class Panel(NDFrame):
 
     _constructor_sliced = DataFrame
 
+    _constructor_expanddim = _constructor
+
     def __init__(self, data=None, items=None, major_axis=None, minor_axis=None,
                  copy=False, dtype=None):
         self._init_data(data=data, items=items, major_axis=major_axis,
@@ -398,7 +400,7 @@ class Panel(NDFrame):
         y : SparseDataFrame
         """
         from pandas.core.sparse import SparsePanel
-        frames = dict(compat.iteritems(self))
+        frames = dict(self.iteritems())
         return SparsePanel(frames, items=self.items,
                            major_axis=self.major_axis,
                            minor_axis=self.minor_axis, default_kind=kind,
@@ -450,7 +452,7 @@ class Panel(NDFrame):
             writer = path
         kwargs['na_rep'] = na_rep
 
-        for item, df in compat.iteritems(self):
+        for item, df in self.iteritems():
             name = str(item)
             df.to_excel(writer, name, **kwargs)
         writer.save()
@@ -576,7 +578,7 @@ class Panel(NDFrame):
                                  'object was {1}'.format(
                                      shape[1:], tuple(map(int, value.shape))))
             mat = np.asarray(value)
-        elif np.isscalar(value):
+        elif lib.isscalar(value):
             dtype, value = _infer_dtype_from_scalar(value)
             mat = np.empty(shape[1:], dtype=dtype)
             mat.fill(value)
@@ -703,7 +705,7 @@ class Panel(NDFrame):
             return self._combine_panel(other, func)
         elif isinstance(other, DataFrame):
             return self._combine_frame(other, func, axis=axis)
-        elif np.isscalar(other):
+        elif lib.isscalar(other):
             return self._combine_const(other, func)
         else:
             raise NotImplementedError("%s is not supported in combine "

@@ -6,6 +6,7 @@ from pandas import tslib
 import pandas._period as period
 import datetime
 
+import pandas as pd
 from pandas.core.api import Timestamp, Series, Timedelta, Period, to_datetime
 from pandas.tslib import get_timezone
 from pandas._period import period_asfreq, period_ordinal
@@ -22,6 +23,7 @@ from pandas.util.testing import assert_series_equal, _skip_if_has_locale
 
 
 class TestTimestamp(tm.TestCase):
+
     def test_constructor(self):
         base_str = '2014-07-01 09:00'
         base_dt = datetime.datetime(2014, 7, 1, 9)
@@ -472,6 +474,11 @@ class TestDatetimeParsingWrappers(tm.TestCase):
                 good_date_string))
 
     def test_parsers(self):
+
+        # https://github.com/dateutil/dateutil/issues/217
+        import dateutil
+        yearfirst = dateutil.__version__ >= LooseVersion('2.5.0')
+
         cases = {'2011-01-01': datetime.datetime(2011, 1, 1),
                  '2Q2005': datetime.datetime(2005, 4, 1),
                  '2Q05': datetime.datetime(2005, 4, 1),
@@ -517,23 +524,34 @@ class TestDatetimeParsingWrappers(tm.TestCase):
                  '2014-06': datetime.datetime(2014, 6, 1),
                  '06-2014': datetime.datetime(2014, 6, 1),
                  '2014-6': datetime.datetime(2014, 6, 1),
-                 '6-2014': datetime.datetime(2014, 6, 1), }
+                 '6-2014': datetime.datetime(2014, 6, 1),
+
+                 '20010101 12': datetime.datetime(2001, 1, 1, 12),
+                 '20010101 1234': datetime.datetime(2001, 1, 1, 12, 34),
+                 '20010101 123456': datetime.datetime(2001, 1, 1, 12, 34, 56),
+                 }
 
         for date_str, expected in compat.iteritems(cases):
-            result1, _, _ = tools.parse_time_string(date_str)
-            result2 = to_datetime(date_str)
-            result3 = to_datetime([date_str])
-            result4 = to_datetime(np.array([date_str], dtype=object))
-            result5 = Timestamp(date_str)
-            result6 = DatetimeIndex([date_str])[0]
-            result7 = date_range(date_str, freq='S', periods=1)
+            result1, _, _ = tools.parse_time_string(date_str,
+                                                    yearfirst=yearfirst)
+            result2 = to_datetime(date_str, yearfirst=yearfirst)
+            result3 = to_datetime([date_str], yearfirst=yearfirst)
+            result4 = to_datetime(np.array([date_str], dtype=object),
+                                  yearfirst=yearfirst)
+            result6 = DatetimeIndex([date_str], yearfirst=yearfirst)[0]
             self.assertEqual(result1, expected)
             self.assertEqual(result2, expected)
             self.assertEqual(result3, expected)
             self.assertEqual(result4, expected)
-            self.assertEqual(result5, expected)
             self.assertEqual(result6, expected)
-            self.assertEqual(result7, expected)
+
+            # these really need to have yearfist, but we don't support
+            if not yearfirst:
+                result5 = Timestamp(date_str)
+                self.assertEqual(result5, expected)
+                result7 = date_range(date_str, freq='S', periods=1,
+                                     yearfirst=yearfirst)
+                self.assertEqual(result7, expected)
 
         # NaT
         result1, _, _ = tools.parse_time_string('NaT')
@@ -711,11 +729,22 @@ class TestDatetimeParsingWrappers(tm.TestCase):
             self.assertEqual(actual, exp)
 
         # seperators must all match - YYYYMM not valid
-        invalid_cases = ['2011-01/02', '2011^11^11', '201401',
-                         '201111', '200101']
+        invalid_cases = ['2011-01/02', '2011^11^11',
+                         '201401', '201111', '200101',
+                         # mixed separated and unseparated
+                         '2005-0101', '200501-01',
+                         '20010101 12:3456', '20010101 1234:56',
+                         # HHMMSS must have two digits in each component
+                         # if unseparated
+                         '20010101 1', '20010101 123', '20010101 12345',
+                         '20010101 12345Z',
+                         # wrong separator for HHMMSS
+                         '2001-01-01 12-34-56']
         for date_str in invalid_cases:
             with tm.assertRaises(ValueError):
                 tslib._test_parse_iso8601(date_str)
+                # If no ValueError raised, let me know which case failed.
+                raise Exception(date_str)
 
 
 class TestArrayToDatetime(tm.TestCase):
@@ -879,6 +908,11 @@ class TestTimestampNsOperations(tm.TestCase):
         self.assertEqual(ts.value, expected_value + 4 * 3600 * 1000000000)
         self.assertIn(expected_repr, repr(ts))
 
+        # GH 10041
+        ts = Timestamp('20130501T071545.123456789')
+        self.assertEqual(ts.value, expected_value)
+        self.assertIn(expected_repr, repr(ts))
+
     def test_nanosecond_timestamp(self):
         # GH 7610
         expected = 1293840000000000005
@@ -915,37 +949,85 @@ class TestTimestampNsOperations(tm.TestCase):
 
     def test_nat_arithmetic(self):
         # GH 6873
-        nat = tslib.NaT
-        t = Timestamp('2014-01-01')
-        dt = datetime.datetime(2014, 1, 1)
-        delta = datetime.timedelta(3600)
-        td = Timedelta('5s')
         i = 2
         f = 1.5
 
-        for (left, right) in [(nat, i), (nat, f), (nat, np.nan)]:
-            self.assertTrue((left / right) is nat)
-            self.assertTrue((left * right) is nat)
-            self.assertTrue((right * left) is nat)
+        for (left, right) in [(pd.NaT, i), (pd.NaT, f), (pd.NaT, np.nan)]:
+            self.assertIs(left / right, pd.NaT)
+            self.assertIs(left * right, pd.NaT)
+            self.assertIs(right * left, pd.NaT)
             with tm.assertRaises(TypeError):
                 right / left
 
         # Timestamp / datetime
-        for (left, right) in [(nat, nat), (nat, t), (nat, dt)]:
+        t = Timestamp('2014-01-01')
+        dt = datetime.datetime(2014, 1, 1)
+        for (left, right) in [(pd.NaT, pd.NaT), (pd.NaT, t), (pd.NaT, dt)]:
             # NaT __add__ or __sub__ Timestamp-like (or inverse) returns NaT
-            self.assertTrue((right + left) is nat)
-            self.assertTrue((left + right) is nat)
-            self.assertTrue((left - right) is nat)
-            self.assertTrue((right - left) is nat)
+            self.assertIs(right + left, pd.NaT)
+            self.assertIs(left + right, pd.NaT)
+            self.assertIs(left - right, pd.NaT)
+            self.assertIs(right - left, pd.NaT)
 
         # timedelta-like
         # offsets are tested in test_offsets.py
-        for (left, right) in [(nat, delta), (nat, td)]:
+
+        delta = datetime.timedelta(3600)
+        td = Timedelta('5s')
+
+        for (left, right) in [(pd.NaT, delta), (pd.NaT, td)]:
             # NaT + timedelta-like returns NaT
-            self.assertTrue((right + left) is nat)
-            self.assertTrue((left + right) is nat)
-            self.assertTrue((right - left) is nat)
-            self.assertTrue((left - right) is nat)
+            self.assertIs(right + left, pd.NaT)
+            self.assertIs(left + right, pd.NaT)
+            self.assertIs(right - left, pd.NaT)
+            self.assertIs(left - right, pd.NaT)
+
+        # GH 11718
+        tm._skip_if_no_pytz()
+        import pytz
+
+        t_utc = Timestamp('2014-01-01', tz='UTC')
+        t_tz = Timestamp('2014-01-01', tz='US/Eastern')
+        dt_tz = pytz.timezone('Asia/Tokyo').localize(dt)
+
+        for (left, right) in [(pd.NaT, t_utc), (pd.NaT, t_tz),
+                              (pd.NaT, dt_tz)]:
+            # NaT __add__ or __sub__ Timestamp-like (or inverse) returns NaT
+            self.assertIs(right + left, pd.NaT)
+            self.assertIs(left + right, pd.NaT)
+            self.assertIs(left - right, pd.NaT)
+            self.assertIs(right - left, pd.NaT)
+
+    def test_nat_arithmetic_index(self):
+        # GH 11718
+
+        # datetime
+        tm._skip_if_no_pytz()
+
+        dti = pd.DatetimeIndex(['2011-01-01', '2011-01-02'], name='x')
+        exp = pd.DatetimeIndex([pd.NaT, pd.NaT], name='x')
+        self.assert_index_equal(dti + pd.NaT, exp)
+        self.assert_index_equal(pd.NaT + dti, exp)
+
+        dti_tz = pd.DatetimeIndex(['2011-01-01', '2011-01-02'],
+                                  tz='US/Eastern', name='x')
+        exp = pd.DatetimeIndex([pd.NaT, pd.NaT], name='x', tz='US/Eastern')
+        self.assert_index_equal(dti_tz + pd.NaT, exp)
+        self.assert_index_equal(pd.NaT + dti_tz, exp)
+
+        exp = pd.TimedeltaIndex([pd.NaT, pd.NaT], name='x')
+        for (left, right) in [(pd.NaT, dti), (pd.NaT, dti_tz)]:
+            self.assert_index_equal(left - right, exp)
+            self.assert_index_equal(right - left, exp)
+
+        # timedelta
+        tdi = pd.TimedeltaIndex(['1 day', '2 day'], name='x')
+        exp = pd.DatetimeIndex([pd.NaT, pd.NaT], name='x')
+        for (left, right) in [(pd.NaT, tdi)]:
+            self.assert_index_equal(left + right, exp)
+            self.assert_index_equal(right + left, exp)
+            self.assert_index_equal(left - right, exp)
+            self.assert_index_equal(right - left, exp)
 
 
 class TestTslib(tm.TestCase):
@@ -1173,8 +1255,8 @@ class TestTimestampOps(tm.TestCase):
                                    period.H_RESO, period.T_RESO,
                                    period.S_RESO, period.MS_RESO,
                                    period.US_RESO]):
-            for tz in [None, 'Asia/Tokyo', 'US/Eastern', 'dateutil/US/Eastern'
-                       ]:
+            for tz in [None, 'Asia/Tokyo', 'US/Eastern',
+                       'dateutil/US/Eastern']:
                 idx = date_range(start='2013-04-01', periods=30, freq=freq,
                                  tz=tz)
                 result = period.resolution(idx.asi8, idx.tz)

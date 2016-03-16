@@ -488,6 +488,9 @@ class HDFStore(StringMixin):
         """
         return [n._v_pathname for n in self.groups()]
 
+    def __iter__(self):
+        return iter(self.keys())
+
     def items(self):
         """
         iterate on key->group
@@ -2723,7 +2726,7 @@ class SparsePanelFixed(GenericFixed):
         self.attrs.default_kind = obj.default_kind
         self.write_index('items', obj.items)
 
-        for name, sdf in compat.iteritems(obj):
+        for name, sdf in obj.iteritems():
             key = 'sparse_frame_%s' % name
             if key not in self.group._v_children:
                 node = self._handle.create_group(self.group, key)

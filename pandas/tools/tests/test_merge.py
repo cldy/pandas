@@ -236,27 +236,27 @@ class TestMerge(tm.TestCase):
 
     def test_join_on_fails_with_different_right_index(self):
         with tm.assertRaises(ValueError):
-            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+            df = DataFrame({'a': np.random.choice(['m', 'f'], size=3),
                             'b': np.random.randn(3)})
-            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+            df2 = DataFrame({'a': np.random.choice(['m', 'f'], size=10),
                              'b': np.random.randn(10)},
                             index=tm.makeCustomIndex(10, 2))
             merge(df, df2, left_on='a', right_index=True)
 
     def test_join_on_fails_with_different_left_index(self):
         with tm.assertRaises(ValueError):
-            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+            df = DataFrame({'a': np.random.choice(['m', 'f'], size=3),
                             'b': np.random.randn(3)},
                            index=tm.makeCustomIndex(10, 2))
-            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+            df2 = DataFrame({'a': np.random.choice(['m', 'f'], size=10),
                              'b': np.random.randn(10)})
             merge(df, df2, right_on='b', left_index=True)
 
     def test_join_on_fails_with_different_column_counts(self):
         with tm.assertRaises(ValueError):
-            df = DataFrame({'a': tm.choice(['m', 'f'], size=3),
+            df = DataFrame({'a': np.random.choice(['m', 'f'], size=3),
                             'b': np.random.randn(3)})
-            df2 = DataFrame({'a': tm.choice(['m', 'f'], size=10),
+            df2 = DataFrame({'a': np.random.choice(['m', 'f'], size=10),
                              'b': np.random.randn(10)},
                             index=tm.makeCustomIndex(10, 2))
             merge(df, df2, right_on='a', left_on=['a', 'b'])
@@ -609,12 +609,19 @@ class TestMerge(tm.TestCase):
         merged = left.merge(right, left_on='lkey', right_on='rkey',
                             how='outer', sort=True)
 
-        assert_almost_equal(merged['lkey'],
-                            ['bar', 'baz', 'foo', 'foo', 'foo', 'foo', np.nan])
-        assert_almost_equal(merged['rkey'],
-                            ['bar', np.nan, 'foo', 'foo', 'foo', 'foo', 'qux'])
-        assert_almost_equal(merged['value_x'], [2, 3, 1, 1, 4, 4, np.nan])
-        assert_almost_equal(merged['value_y'], [6, np.nan, 5, 8, 5, 8, 7])
+        exp = pd.Series(['bar', 'baz', 'foo', 'foo', 'foo', 'foo', np.nan],
+                        name='lkey')
+        tm.assert_series_equal(merged['lkey'], exp)
+
+        exp = pd.Series(['bar', np.nan, 'foo', 'foo', 'foo', 'foo', 'qux'],
+                        name='rkey')
+        tm.assert_series_equal(merged['rkey'], exp)
+
+        exp = pd.Series([2, 3, 1, 1, 4, 4, np.nan], name='value_x')
+        tm.assert_series_equal(merged['value_x'], exp)
+
+        exp = pd.Series([6, np.nan, 5, 8, 5, 8, 7], name='value_y')
+        tm.assert_series_equal(merged['value_y'], exp)
 
     def test_merge_copy(self):
         left = DataFrame({'a': 0, 'b': 1}, index=lrange(10))
@@ -1024,6 +1031,36 @@ class TestMerge(tm.TestCase):
         result = pd.merge(left, right, on='key', how='outer')
         assert_frame_equal(result, expected)
 
+    def test_merge_on_periods(self):
+        left = pd.DataFrame({'key': pd.period_range('20151010', periods=2,
+                                                    freq='D'),
+                             'value': [1, 2]})
+        right = pd.DataFrame({'key': pd.period_range('20151011', periods=3,
+                                                     freq='D'),
+                              'value': [1, 2, 3]})
+
+        expected = DataFrame({'key': pd.period_range('20151010', periods=4,
+                                                     freq='D'),
+                              'value_x': [1, 2, np.nan, np.nan],
+                              'value_y': [np.nan, 1, 2, 3]})
+        result = pd.merge(left, right, on='key', how='outer')
+        assert_frame_equal(result, expected)
+
+        left = pd.DataFrame({'value': pd.period_range('20151010', periods=2,
+                                                      freq='D'),
+                             'key': [1, 2]})
+        right = pd.DataFrame({'value': pd.period_range('20151011', periods=2,
+                                                       freq='D'),
+                              'key': [2, 3]})
+
+        exp_x = pd.period_range('20151010', periods=2, freq='D')
+        exp_y = pd.period_range('20151011', periods=2, freq='D')
+        expected = DataFrame({'value_x': list(exp_x) + [pd.NaT],
+                              'value_y': [pd.NaT] + list(exp_y),
+                              'key': [1., 2, 3]})
+        result = pd.merge(left, right, on='key', how='outer')
+        assert_frame_equal(result, expected)
+
     def test_concat_NaT_series(self):
         # GH 11693
         # test for merging NaT series with datetime series.
@@ -1078,6 +1115,82 @@ class TestMerge(tm.TestCase):
         y = Series(['a', 'b'])
         expected = Series([x[0], x[1], y[0], y[1]],
                           dtype='object')
+        result = concat([x, y], ignore_index=True)
+        tm.assert_series_equal(result, expected)
+
+        # 12217
+        # 12306 fixed I think
+
+        # Concat'ing two UTC times
+        first = pd.DataFrame([[datetime(2016, 1, 1)]])
+        first[0] = first[0].dt.tz_localize('UTC')
+
+        second = pd.DataFrame([[datetime(2016, 1, 2)]])
+        second[0] = second[0].dt.tz_localize('UTC')
+
+        result = pd.concat([first, second])
+        self.assertEqual(result[0].dtype, 'datetime64[ns, UTC]')
+
+        # Concat'ing two London times
+        first = pd.DataFrame([[datetime(2016, 1, 1)]])
+        first[0] = first[0].dt.tz_localize('Europe/London')
+
+        second = pd.DataFrame([[datetime(2016, 1, 2)]])
+        second[0] = second[0].dt.tz_localize('Europe/London')
+
+        result = pd.concat([first, second])
+        self.assertEqual(result[0].dtype, 'datetime64[ns, Europe/London]')
+
+        # Concat'ing 2+1 London times
+        first = pd.DataFrame([[datetime(2016, 1, 1)], [datetime(2016, 1, 2)]])
+        first[0] = first[0].dt.tz_localize('Europe/London')
+
+        second = pd.DataFrame([[datetime(2016, 1, 3)]])
+        second[0] = second[0].dt.tz_localize('Europe/London')
+
+        result = pd.concat([first, second])
+        self.assertEqual(result[0].dtype, 'datetime64[ns, Europe/London]')
+
+        # Concat'ing 1+2 London times
+        first = pd.DataFrame([[datetime(2016, 1, 1)]])
+        first[0] = first[0].dt.tz_localize('Europe/London')
+
+        second = pd.DataFrame([[datetime(2016, 1, 2)], [datetime(2016, 1, 3)]])
+        second[0] = second[0].dt.tz_localize('Europe/London')
+
+        result = pd.concat([first, second])
+        self.assertEqual(result[0].dtype, 'datetime64[ns, Europe/London]')
+
+    def test_concat_period_series(self):
+        x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+        y = Series(pd.PeriodIndex(['2015-10-01', '2016-01-01'], freq='D'))
+        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+        result = concat([x, y], ignore_index=True)
+        tm.assert_series_equal(result, expected)
+
+        # different freq
+        x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+        y = Series(pd.PeriodIndex(['2015-10-01', '2016-01-01'], freq='M'))
+        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+        result = concat([x, y], ignore_index=True)
+        tm.assert_series_equal(result, expected)
+
+        x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+        y = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='M'))
+        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+        result = concat([x, y], ignore_index=True)
+        tm.assert_series_equal(result, expected)
+
+        # non-period
+        x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+        y = Series(pd.DatetimeIndex(['2015-11-01', '2015-12-01']))
+        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+        result = concat([x, y], ignore_index=True)
+        tm.assert_series_equal(result, expected)
+
+        x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+        y = Series(['A', 'B'])
+        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
         result = concat([x, y], ignore_index=True)
         tm.assert_series_equal(result, expected)
 
@@ -2621,7 +2734,7 @@ class TestConcatenate(tm.TestCase):
 
         data_dict = {}
         for p in panels:
-            data_dict.update(compat.iteritems(p))
+            data_dict.update(p.iteritems())
 
         joined = panels[0].join(panels[1:], how='inner')
         expected = Panel.from_dict(data_dict, intersect=True)
