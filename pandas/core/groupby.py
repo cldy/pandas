@@ -2914,7 +2914,7 @@ class SeriesGroupBy(GroupBy):
             res, out = np.zeros(len(ri), dtype=out.dtype), res
             res[ids] = out
 
-        return self.input_constructor_sliced(
+        return self.inputconstructor_sliced(
             out if ids[0] != -1 else out[1:],
             index=self.grouper.result_index,
             name=self.name)
