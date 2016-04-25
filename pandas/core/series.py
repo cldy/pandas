@@ -252,10 +252,6 @@ class Series(base.IndexOpsMixin, strings.StringAccessorMixin,
         from pandas.core.frame import DataFrame
         return DataFrame
 
-    @property
-    def _constructor_sliced(self):
-        return Series
-
     # types
     @property
     def _can_hold_na(self):
